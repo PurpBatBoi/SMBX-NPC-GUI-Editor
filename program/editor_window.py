@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QFormLayout, QSizePolicy, QToolButton, QScrollArea,
                              QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
                              QButtonGroup, QSplitter)
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QFileSystemWatcher
 from .npc_data import NPCData
 from .npc_definitions import NPC_DEFS
 from .preview_widget import AnimationPreview
@@ -32,11 +32,9 @@ class TriStateBoolWidget(QWidget):
         if checked: self.btn_false.setChecked(False)
         self.stateChanged.emit()
     def _on_false_toggled(self, checked):
-        if checked:
-            self.btn_true.setChecked(False)
+        if checked: self.btn_true.setChecked(False)
         else:
-            if not self.btn_true.isChecked():
-                self.stateChanged.emit()
+            if not self.btn_true.isChecked(): self.stateChanged.emit()
         self.stateChanged.emit()
     def get_state(self):
         if self.btn_true.isChecked(): return True
@@ -55,18 +53,16 @@ class TriStateBoolWidget(QWidget):
             self.btn_false.setChecked(False)
         self.blockSignals(False)
 
-# --- UPDATED CollapsibleBox (No Checkbox) ---
+# --- UPDATED CollapsibleBox (Clean - No Master Checkbox) ---
 class CollapsibleBox(QWidget):
     def __init__(self, title="", parent=None):
         super().__init__(parent)
         
-        # Header Frame
         self.header_frame = QFrame()
         self.header_frame.setStyleSheet("""
             .QFrame { background-color: #444; border-radius: 3px; }
             .QFrame:hover { background-color: #555; }
         """)
-        # Make the header clickable
         self.header_frame.mousePressEvent = self.on_header_clicked
         
         header_layout = QHBoxLayout(self.header_frame)
@@ -79,7 +75,7 @@ class CollapsibleBox(QWidget):
         self.arrow_btn.setStyleSheet("QToolButton { border: none; background: transparent; color: white; }")
         self.arrow_btn.setCheckable(True)
         self.arrow_btn.setChecked(False)
-        self.arrow_btn.clicked.connect(self.toggle_view) # Clicking arrow toggles view
+        self.arrow_btn.clicked.connect(self.toggle_view)
         
         # 2. Label (Title)
         self.lbl_title = QLabel(title)
@@ -89,7 +85,6 @@ class CollapsibleBox(QWidget):
         header_layout.addWidget(self.lbl_title)
         header_layout.addStretch()
 
-        # Content Area
         self.content_area = QWidget()
         self.content_layout = QFormLayout()
         self.content_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -97,7 +92,6 @@ class CollapsibleBox(QWidget):
         self.content_area.setLayout(self.content_layout)
         self.content_area.setVisible(False)
         
-        # Main Layout
         lay = QVBoxLayout(self)
         lay.setSpacing(0)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -105,7 +99,6 @@ class CollapsibleBox(QWidget):
         lay.addWidget(self.content_area)
         
     def on_header_clicked(self, event):
-        # Forward click on frame to toggle
         self.toggle_view()
 
     def toggle_view(self):
@@ -115,12 +108,10 @@ class CollapsibleBox(QWidget):
         self.content_area.setVisible(checked)
 
     def expand(self):
-        if not self.arrow_btn.isChecked():
-            self.toggle_view()
+        if not self.arrow_btn.isChecked(): self.toggle_view()
             
     def collapse(self):
-        if self.arrow_btn.isChecked():
-            self.toggle_view()
+        if self.arrow_btn.isChecked(): self.toggle_view()
 
     def add_row(self, label, widget):
         self.content_layout.addRow(label, widget)
@@ -140,7 +131,6 @@ class MainWindow(QMainWindow):
         self.is_saving = False
         self.watched_files = []
         
-        from PyQt6.QtCore import QFileSystemWatcher
         self.watcher = QFileSystemWatcher(self)
         self.watcher.fileChanged.connect(self.on_external_file_change)
         
@@ -168,7 +158,7 @@ class MainWindow(QMainWindow):
 
         self.generate_standard_ui()
 
-        # Custom Props (Using new CollapsibleBox, manually adding title label since chk_enable is gone)
+        # Custom Props
         self.custom_box = CollapsibleBox("Custom / Extra Properties")
         
         self.custom_table = QTableWidget()
@@ -232,20 +222,14 @@ class MainWindow(QMainWindow):
         self.all_widgets[key] = widget
 
     def _get_widget_value(self, widget):
-        if isinstance(widget, TriStateBoolWidget):
-            return widget.get_state()
-        elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-            return widget.value()
-        elif isinstance(widget, QLineEdit):
-            return widget.text() if widget.text() else None
-        elif isinstance(widget, QComboBox):
-            return widget.currentData()
+        if isinstance(widget, TriStateBoolWidget): return widget.get_state()
+        elif isinstance(widget, (QSpinBox, QDoubleSpinBox)): return widget.value()
+        elif isinstance(widget, QLineEdit): return widget.text() if widget.text() else None
+        elif isinstance(widget, QComboBox): return widget.currentData()
         return None
 
     def _add_param_widget(self, section, key, definition):
         dtype = definition.get('type')
-        label_text = definition.get('label', key)
-        tip = definition.get('tips', key)
         widget = None
         if dtype == bool:
             widget = TriStateBoolWidget()
@@ -264,17 +248,17 @@ class MainWindow(QMainWindow):
             widget.textChanged.connect(self.on_standard_change)
         elif dtype == "enum":
             widget = QComboBox()
-            for k, v in definition.get('choices', {}).items():
-                widget.addItem(v, k)
+            for k, v in definition.get('choices', {}).items(): widget.addItem(v, k)
             widget.currentIndexChanged.connect(self.on_standard_change)
         
         if widget:
-            widget.setToolTip(tip)
+            widget.setToolTip(definition.get('tips', key))
             container = QWidget()
             container_layout = QHBoxLayout(container)
             container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.setSpacing(5)
             
+            # Individual Parameter Checkbox
             chk = QCheckBox()
             chk.setChecked(False)
             chk.toggled.connect(lambda checked, k=key: self.on_param_enabled(k, checked))
@@ -282,7 +266,7 @@ class MainWindow(QMainWindow):
             container_layout.addWidget(chk)
             container_layout.addWidget(widget, 1)
             
-            section.add_row(label_text, container)
+            section.add_row(definition.get('label', key), container)
             self._register_widget(key, widget)
             self.param_checkboxes[key] = chk
 
@@ -292,6 +276,7 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(5)
         
+        # Dual Parameter Checkbox (Controls both)
         chk = QCheckBox()
         chk.setChecked(False)
         chk.toggled.connect(lambda checked, k=key1: self.on_param_enabled(k, checked))
@@ -317,7 +302,6 @@ class MainWindow(QMainWindow):
         section.add_row(label_row, container)
         self._register_widget(key1, w1)
         self._register_widget(key2, w2)
-        
         self.param_checkboxes[key1] = chk
         self.param_checkboxes[key2] = chk
 
@@ -332,14 +316,11 @@ class MainWindow(QMainWindow):
 
         for cat in categories:
             section = CollapsibleBox(cat)
-            
             self.form_layout.addWidget(section)
             self.ui_sections[cat] = section
             self.category_keys[cat] = []
             
-            # Default expand Animation
-            if cat == "Animation":
-                section.expand()
+            if cat == "Animation": section.expand()
         
         for key, definition in NPC_DEFS.items():
             cat = definition['category']
@@ -372,7 +353,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(500, lambda: setattr(self, 'is_saving', False))
 
     def update_ui_from_data(self):
-        # 1. Update Widgets and Individual Checkboxes
+        # 1. Update Widgets
         for key, widget in self.all_widgets.items():
             val = self.npc_data.standard_params.get(key)
             default = NPC_DEFS[key]['default']
@@ -381,43 +362,28 @@ class MainWindow(QMainWindow):
             widget.blockSignals(True)
             if chk:
                 chk.blockSignals(True)
-                # If val is not None, enable checkbox
                 is_active = (val is not None)
-                if is_active:
-                    chk.setChecked(True)
-                elif not chk.isChecked():
-                    chk.setChecked(False)
-                
-                widget.setEnabled(chk.isChecked())
+                chk.setChecked(is_active)
+                widget.setEnabled(is_active)
                 chk.blockSignals(False)
             
             display_val = val if val is not None else default
-            
-            if isinstance(widget, TriStateBoolWidget):
-                widget.set_state(display_val)
-            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-                widget.setValue(display_val)
-            elif isinstance(widget, QLineEdit):
-                widget.setText(str(display_val))
+            if isinstance(widget, TriStateBoolWidget): widget.set_state(display_val)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)): widget.setValue(display_val)
+            elif isinstance(widget, QLineEdit): widget.setText(str(display_val))
             elif isinstance(widget, QComboBox):
                 idx = widget.findData(display_val)
                 if idx >= 0: widget.setCurrentIndex(idx)
             widget.blockSignals(False)
 
-        # 2. Auto-expand categories that have active parameters
+        # 2. Update Categories (Expand active ones)
         for cat, keys in self.category_keys.items():
-            has_active = False
-            for key in keys:
-                if self.npc_data.standard_params.get(key) is not None:
-                    has_active = True
-                    break
-            
             section = self.ui_sections.get(cat)
-            if section:
-                if has_active:
-                    section.expand()
-                else:
-                    section.collapse()
+            if not section: continue
+            
+            has_active = any(self.npc_data.standard_params.get(k) is not None for k in keys)
+            if has_active: section.expand()
+            else: section.collapse()
 
         # 3. Custom Table
         self.custom_table.blockSignals(True)
@@ -430,9 +396,7 @@ class MainWindow(QMainWindow):
             self.custom_table.setItem(row, 1, QTableWidgetItem(str(v)))
             has_custom = True
         self.custom_table.blockSignals(False)
-        
-        if has_custom:
-            self.custom_box.expand()
+        if has_custom: self.custom_box.expand()
         
         self.preview.update_timer()
         self.preview.update()
@@ -443,12 +407,10 @@ class MainWindow(QMainWindow):
             chk = self.param_checkboxes.get(key)
             if not widget or not chk: continue
             
-            # If main checkbox is unchecked, we treat it as disabled (None)
             if not chk.isChecked():
                 continue
             
             val = self._get_widget_value(widget)
-            
             if isinstance(widget, TriStateBoolWidget) and val is None:
                 self.npc_data.set_standard(key, None)
             else:
@@ -460,22 +422,19 @@ class MainWindow(QMainWindow):
     def on_param_enabled(self, key, checked):
         widget = self.all_widgets.get(key)
         if not widget: return
-        
         widget.setEnabled(checked)
-        
         if checked:
             val = self._get_widget_value(widget)
             self.npc_data.set_standard(key, val)
         else:
             self.npc_data.set_standard(key, None)
-        
         self.preview.update_timer()
         self.preview.update()
 
     def sync_ui_from_visual(self):
         p = self.npc_data.standard_params
-        keys_to_update = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
-        for key in keys_to_update:
+        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
+        for key in keys:
             widget = self.all_widgets.get(key)
             val = p.get(key)
             if widget and val is not None:
@@ -494,13 +453,23 @@ class MainWindow(QMainWindow):
 
     def on_external_file_change(self, path):
         if self.is_saving: return
+        
+        # Handle Atomic Saves (File deleted then recreated)
+        if not os.path.exists(path):
+            QTimer.singleShot(100, lambda: self._update_file_watcher())
+            return
+            
         if path == self.npc_data.filepath:
-            print(f"External change detected on {path}, reloading...")
-            self.npc_data.load(path)
-            self.update_ui_from_data()
+            print(f"External reload: {path}")
+            if self.npc_data.load(path):
+                self.update_ui_from_data()
         elif path == self.preview.image_path:
             self.preview.load_image()
-        self.watcher.addPath(path)
+            
+        # Re-add to watcher
+        if path in self.watched_files:
+            self.watcher.removePath(path)
+            self.watcher.addPath(path)
 
     def on_custom_table_change(self):
         self.npc_data.custom_params = {}
