@@ -53,7 +53,7 @@ class TriStateBoolWidget(QWidget):
             self.btn_false.setChecked(False)
         self.blockSignals(False)
 
-# --- UPDATED CollapsibleBox (Clean - No Master Checkbox) ---
+# --- CollapsibleBox (Unchanged) ---
 class CollapsibleBox(QWidget):
     def __init__(self, title="", parent=None):
         super().__init__(parent)
@@ -69,7 +69,6 @@ class CollapsibleBox(QWidget):
         header_layout.setContentsMargins(5, 5, 5, 5)
         header_layout.setSpacing(10)
 
-        # 1. Arrow
         self.arrow_btn = QToolButton()
         self.arrow_btn.setArrowType(Qt.ArrowType.RightArrow)
         self.arrow_btn.setStyleSheet("QToolButton { border: none; background: transparent; color: white; }")
@@ -77,7 +76,6 @@ class CollapsibleBox(QWidget):
         self.arrow_btn.setChecked(False)
         self.arrow_btn.clicked.connect(self.toggle_view)
         
-        # 2. Label (Title)
         self.lbl_title = QLabel(title)
         self.lbl_title.setStyleSheet("font-weight: bold; color: white;")
 
@@ -258,7 +256,6 @@ class MainWindow(QMainWindow):
             container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.setSpacing(5)
             
-            # Individual Parameter Checkbox
             chk = QCheckBox()
             chk.setChecked(False)
             chk.toggled.connect(lambda checked, k=key: self.on_param_enabled(k, checked))
@@ -276,7 +273,6 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(5)
         
-        # Dual Parameter Checkbox (Controls both)
         chk = QCheckBox()
         chk.setChecked(False)
         chk.toggled.connect(lambda checked, k=key1: self.on_param_enabled(k, checked))
@@ -346,6 +342,16 @@ class MainWindow(QMainWindow):
                 self._update_file_watcher()
 
     def save_file(self):
+        # 1. Handle "Save As" if no file is currently loaded
+        if not self.npc_data.filepath:
+            fname, _ = QFileDialog.getSaveFileName(self, "Save NPC Config", "", "Text Files (*.txt)")
+            if not fname:
+                return # User cancelled
+            self.npc_data.filepath = fname
+            self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
+            self._update_file_watcher()
+
+        # 2. Force synchronization
         self.on_standard_change() 
         self.on_custom_table_change()
         self.is_saving = True
@@ -408,6 +414,7 @@ class MainWindow(QMainWindow):
             if not widget or not chk: continue
             
             if not chk.isChecked():
+                self.npc_data.set_standard(key, None)
                 continue
             
             val = self._get_widget_value(widget)
@@ -441,6 +448,11 @@ class MainWindow(QMainWindow):
                 widget.blockSignals(True)
                 widget.setValue(val)
                 widget.blockSignals(False)
+                
+                # Check box if needed, but DO NOT BLOCK SIGNALS
+                chk = self.param_checkboxes.get(key)
+                if chk and not chk.isChecked():
+                    chk.setChecked(True)
 
     def _update_file_watcher(self):
         if self.watched_files: self.watcher.removePaths(self.watched_files)
