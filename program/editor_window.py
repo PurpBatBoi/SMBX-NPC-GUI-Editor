@@ -131,9 +131,9 @@ class MainWindow(QMainWindow):
         
         # 1. File Buttons
         btn_layout = QHBoxLayout()
-        btn_load = QPushButton("Load .txt")
+        btn_load = QPushButton("Load File")
         btn_load.clicked.connect(self.load_file)
-        btn_save = QPushButton("Save .txt")
+        btn_save = QPushButton("Save File")
         btn_save.clicked.connect(self.save_file)
         btn_layout.addWidget(btn_load)
         btn_layout.addWidget(btn_save)
