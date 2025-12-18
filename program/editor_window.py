@@ -140,6 +140,35 @@ class MainWindow(QMainWindow):
         control_layout.addLayout(btn_layout)
 
         control_layout.addSpacing(10)
+        
+        # Mode Selector
+        mode_frame = QFrame()
+        mode_frame.setFrameStyle(QFrame.Shape.StyledPanel)
+        mode_frame.setStyleSheet("QFrame { background-color: #3a3a3a; border-radius: 4px; padding: 5px; }")
+        mode_layout = QVBoxLayout(mode_frame)
+        mode_layout.setContentsMargins(8, 8, 8, 8)
+        
+        mode_label = QLabel("File Format:")
+        mode_label.setStyleSheet("font-weight: bold; color: white;")
+        mode_layout.addWidget(mode_label)
+        
+        mode_btn_layout = QHBoxLayout()
+        self.rb_txt = QRadioButton("TXT Mode")
+        self.rb_txt.setChecked(True)
+        self.rb_txt.setToolTip("Save as .txt file (SMBX 1.3 format)")
+        self.rb_txt.toggled.connect(self.on_mode_change)
+        
+        self.rb_ini = QRadioButton("INI Mode")
+        self.rb_ini.setToolTip("Save as .ini file (SMBX2 format)")
+        self.rb_ini.toggled.connect(self.on_mode_change)
+        
+        mode_btn_layout.addWidget(self.rb_txt)
+        mode_btn_layout.addWidget(self.rb_ini)
+        mode_layout.addLayout(mode_btn_layout)
+        
+        control_layout.addWidget(mode_frame)
+
+        control_layout.addSpacing(10)
 
         # 2. Collapsible Sections
         self.inputs = {}
@@ -285,11 +314,23 @@ class MainWindow(QMainWindow):
         self.btn_hitbox_mode.toggled.connect(self.on_mode_toggle)
 
     def load_file(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Open NPC Txt", "", "Text Files (*.txt)")
+        fname, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Open NPC File", 
+            "", 
+            "NPC Files (*.txt *.ini);;TXT Files (*.txt);;INI Files (*.ini);;All Files (*)"
+        )
         if fname:
             if self.npc_data.load(fname):
                 self.update_ui_from_data()
                 self.preview.load_image()
+                
+                # Update mode selector based on loaded file
+                if self.npc_data.file_mode == "ini":
+                    self.rb_ini.setChecked(True)
+                else:
+                    self.rb_txt.setChecked(True)
+                
                 self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
 
     def save_file(self):
@@ -363,6 +404,13 @@ class MainWindow(QMainWindow):
     def on_direction_change(self):
         self.preview.show_direction = 1 if self.rb_right.isChecked() else 0
         self.preview.update()
+    
+    def on_mode_change(self):
+        """Update the file mode when user changes format selector"""
+        if self.rb_ini.isChecked():
+            self.npc_data.file_mode = "ini"
+        else:
+            self.npc_data.file_mode = "txt"
 
     def block_signals_all(self, b):
         for w in self.inputs.values():
