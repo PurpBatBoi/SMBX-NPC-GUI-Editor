@@ -1,7 +1,7 @@
 import os
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal
-from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QCursor
+from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QCursor, QImage
 
 class AnimationPreview(QWidget):
     zoomChanged = pyqtSignal(int)
@@ -44,19 +44,65 @@ class AnimationPreview(QWidget):
 
     def load_image(self):
         self.image_path = ""
+        self.mask_path = "" # Track mask for the file watcher
         self.pixmap = None
+        
         if not self.data.filepath: 
             self.update()
             return
         
         base = os.path.splitext(self.data.filepath)[0]
-        for ext in ['.png', '.gif', '.bmp']:
-            path = base + ext
-            if os.path.exists(path):
-                self.image_path = path 
-                self.pixmap = QPixmap(self.image_path)
-                break
+        png_path = base + ".png"
+        
+        # 1. Try modern PNG first
+        if os.path.exists(png_path):
+            self.image_path = png_path
+            self.pixmap = QPixmap(self.image_path)
+        else:
+            # 2. Look for legacy GIF/BMP + Mask
+            for ext in ['.gif', '.bmp']:
+                img_path = base + ext
+                if os.path.exists(img_path):
+                    self.image_path = img_path
+                    # Check for mask (e.g., npc-6.gif -> npc-6m.gif)
+                    mask_path = base + "m" + ext
+                    if os.path.exists(mask_path):
+                        self.mask_path = mask_path
+                        self.pixmap = self._load_legacy_sprite(img_path, mask_path)
+                    else:
+                        # Fallback: No mask found, just load as is
+                        self.pixmap = QPixmap(img_path)
+                    break
+                    
         self.update()
+
+    def _load_legacy_sprite(self, img_path, mask_path):
+        """Combines a base image and an SMBX mask into a transparent QPixmap"""
+        main_img = QImage(img_path).convertToFormat(QImage.Format.Format_ARGB32)
+        mask_img = QImage(mask_path).convertToFormat(QImage.Format.Format_Grayscale8)
+        
+        if main_img.size() != mask_img.size():
+            # In some rare cases masks might be sized differently; skip if so
+            return QPixmap.fromImage(main_img)
+
+        # Process pixels
+        # SMBX Mask: Black (0) = Solid, White (255) = Transparent
+        # Target Alpha: 255 = Solid, 0 = Transparent
+        # Therefore: Alpha = 255 - MaskColor
+        
+        width, height = main_img.width(), main_img.height()
+        for y in range(height):
+            for x in range(width):
+                # Get mask brightness (0-255)
+                mask_pixel = QColor(mask_img.pixel(x, y)).red()
+                alpha = 255 - mask_pixel
+                
+                # Apply to main image
+                color = QColor(main_img.pixel(x, y))
+                color.setAlpha(alpha)
+                main_img.setPixel(x, y, color.rgba())
+        
+        return QPixmap.fromImage(main_img)
 
     def update_timer(self):
         speed = self.data.standard_params.get('framespeed') or 8
