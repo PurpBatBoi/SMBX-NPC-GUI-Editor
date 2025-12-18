@@ -2,16 +2,121 @@ import os
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QSpinBox, QCheckBox, QComboBox, 
                              QRadioButton, QFileDialog, QFrame, QPushButton, 
-                             QFormLayout, QSlider, QSizePolicy)
-from PyQt6.QtCore import Qt
+                             QFormLayout, QSlider, QSizePolicy, QToolButton, QButtonGroup)
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from .npc_data import NPCData
 from .preview_widget import AnimationPreview
+
+class TriStateBoolWidget(QWidget):
+    """A widget with two radio buttons: 'True' and 'False (Forced)'.
+    
+    States:
+    - None: Neither button checked (property not written to file)
+    - True: 'True' button checked (property = true in file)
+    - False: 'False (Forced)' button checked (property = false in file)
+    """
+    
+    stateChanged = pyqtSignal()
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        
+        self.btn_true = QRadioButton("True")
+        self.btn_false = QRadioButton("False (Forced)")
+        
+        # Button group allows deselecting all buttons
+        self.button_group = QButtonGroup(self)
+        self.button_group.setExclusive(False)  # Allow manual deselection
+        self.button_group.addButton(self.btn_true)
+        self.button_group.addButton(self.btn_false)
+        
+        layout.addWidget(self.btn_true)
+        layout.addWidget(self.btn_false)
+        layout.addStretch()
+        
+        # Connect signals
+        self.btn_true.toggled.connect(self._on_true_toggled)
+        self.btn_false.toggled.connect(self._on_false_toggled)
+    
+    def _on_true_toggled(self, checked):
+        if checked:
+            self.btn_false.setChecked(False)
+            self.stateChanged.emit()
+    
+    def _on_false_toggled(self, checked):
+        if checked:
+            self.btn_true.setChecked(False)
+            self.stateChanged.emit()
+        elif not self.btn_true.isChecked():
+            # If unchecking false and true isn't checked, emit change
+            self.stateChanged.emit()
+    
+    def get_state(self):
+        """Returns None, True, or False"""
+        if self.btn_true.isChecked():
+            return True
+        elif self.btn_false.isChecked():
+            return False
+        else:
+            return None
+    
+    def set_state(self, value):
+        """Sets the state. value can be None, True, or False"""
+        self.blockSignals(True)
+        if value is True:
+            self.btn_true.setChecked(True)
+            self.btn_false.setChecked(False)
+        elif value is False:
+            self.btn_true.setChecked(False)
+            self.btn_false.setChecked(True)
+        else:  # None
+            self.btn_true.setChecked(False)
+            self.btn_false.setChecked(False)
+        self.blockSignals(False)
+
+class CollapsibleBox(QWidget):
+    """A custom widget that has a title bar and collapsible content."""
+    def __init__(self, title="", parent=None):
+        super().__init__(parent)
+        
+        # Toggle Button (Header)
+        self.toggle_button = QToolButton(text=title, checkable=True, checked=True)
+        self.toggle_button.setStyleSheet("QToolButton { border: none; font-weight: bold; background-color: #444; color: white; padding: 5px; border-radius: 3px; }")
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toggle_button.setArrowType(Qt.ArrowType.DownArrow)
+        self.toggle_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.toggle_button.clicked.connect(self.on_pressed)
+
+        # Content Area
+        self.content_area = QWidget()
+        self.content_layout = QFormLayout()
+        self.content_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.content_layout.setContentsMargins(5, 5, 5, 5)
+        self.content_area.setLayout(self.content_layout)
+        
+        # Main Layout
+        lay = QVBoxLayout(self)
+        lay.setSpacing(0)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.toggle_button)
+        lay.addWidget(self.content_area)
+        
+    def on_pressed(self):
+        checked = self.toggle_button.isChecked()
+        self.toggle_button.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+        self.content_area.setVisible(checked)
+        
+    def add_row(self, label, widget):
+        self.content_layout.addRow(label, widget)
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SMBX Animation Editor")
-        self.resize(1000, 650)
+        self.resize(1000, 700)
         
         self.npc_data = NPCData()
         
@@ -21,7 +126,7 @@ class MainWindow(QMainWindow):
 
         # --- Left Panel ---
         control_panel = QFrame()
-        control_panel.setFixedWidth(340)
+        control_panel.setFixedWidth(380)
         control_layout = QVBoxLayout(control_panel)
         
         # 1. File Buttons
@@ -36,31 +141,31 @@ class MainWindow(QMainWindow):
 
         control_layout.addSpacing(10)
 
-        # 2. Form Inputs
-        self.form_layout = QFormLayout()
-        self.form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        # 2. Collapsible Sections
         self.inputs = {}
+        self.bool_inputs = {}  # Separate storage for tri-state bools
+
+        # --- Helper Functions ---
         
-        def add_spin(internal_key, display_label, min_v, max_v, tip):
+        def add_spin(section, internal_key, display_label, min_v, max_v, tip):
             spin = QSpinBox()
             spin.setRange(min_v, max_v)
             spin.setToolTip(tip)
             spin.valueChanged.connect(self.on_change)
             self.inputs[internal_key] = spin
-            self.form_layout.addRow(display_label, spin)
+            section.add_row(display_label, spin)
 
-        def add_dual_spin(main_label, key1, key2, sub_label1, sub_label2, min_v, max_v, tip1, tip2):
+        def add_dual_spin(section, main_label, key1, key2, sub_label1, sub_label2, min_v, max_v, tip1, tip2):
             container = QWidget()
             l = QHBoxLayout(container)
             l.setContentsMargins(0, 0, 0, 0)
             l.setSpacing(5)
 
-            # --- SPINBOX 1 ---
+            # Spinbox 1
             if sub_label1: 
                 lbl1 = QLabel(sub_label1)
-                lbl1.setFixedWidth(35)  # Reduced slightly for better left alignment
+                lbl1.setFixedWidth(35)
                 l.addWidget(lbl1)
-            
             s1 = QSpinBox()
             s1.setRange(min_v, max_v)
             s1.setToolTip(tip1)
@@ -68,13 +173,12 @@ class MainWindow(QMainWindow):
             s1.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             l.addWidget(s1)
             
-            # --- SPINBOX 2 ---
+            # Spinbox 2
             if sub_label2: 
                 lbl2 = QLabel(sub_label2)
                 lbl2.setStyleSheet("margin-left: 5px;")
-                lbl2.setFixedWidth(40)  # Reduced slightly for better left alignment
+                lbl2.setFixedWidth(40)
                 l.addWidget(lbl2)
-                
             s2 = QSpinBox()
             s2.setRange(min_v, max_v)
             s2.setToolTip(tip2)
@@ -84,34 +188,54 @@ class MainWindow(QMainWindow):
 
             self.inputs[key1] = s1
             self.inputs[key2] = s2
-            self.form_layout.addRow(main_label, container)
+            section.add_row(main_label, container)
+        
+        def add_tristate_bool(section, internal_key, display_label, tip):
+            widget = TriStateBoolWidget()
+            widget.setToolTip(tip)
+            widget.stateChanged.connect(self.on_change)
+            self.bool_inputs[internal_key] = widget
+            section.add_row(display_label, widget)
 
-        # -- REORDERED & RENAMED FIELDS --
-        
-        add_spin('frames', 'Frames', 1, 100, "Frames per direction")
-        add_spin('framespeed', 'Frame Speed', 1, 100, "Ticks per Frame (TLDR: Lower, the faster)")
-        
-        # GFX Size
-        add_dual_spin("GFX", 'gfxwidth', 'gfxheight', "Width:", "Height:", 1, 1024, "gfxwidth", "gfxheight")
-        
-        # GFX Offset (Moved up)
-        add_dual_spin("GFX Offset", 'gfxoffsetx', 'gfxoffsety', "X:", "Y:", -500, 500, "gfxoffsetx", "gfxoffsety")
+        # === SECTION: ANIMATION ===
+        self.section_anim = CollapsibleBox("Animation")
+        control_layout.addWidget(self.section_anim)
 
+        add_spin(self.section_anim, 'frames', 'Frames', 1, 100, "Frames per direction")
+        add_spin(self.section_anim, 'framespeed', 'Frame Speed', 1, 100, "Ticks per Frame (Lower = Faster)")
+        add_dual_spin(self.section_anim, "GFX", 'gfxwidth', 'gfxheight', "Width:", "Height:", 1, 1024, "gfxwidth", "gfxheight")
+        add_dual_spin(self.section_anim, "GFX Offset", 'gfxoffsetx', 'gfxoffsety', "X:", "Y:", -500, 500, "gfxoffsetx", "gfxoffsety")
+        
         self.combo_style = QComboBox()
         self.combo_style.addItems(["0: Goomba (L=R)", "1: Koopa (Sep L/R)", "2: SMB2 (L/R/UD)"])
         self.combo_style.currentIndexChanged.connect(self.on_change)
-        self.form_layout.addRow("Frame Style", self.combo_style)
+        self.section_anim.add_row("Frame Style", self.combo_style)
+        
+        add_tristate_bool(self.section_anim, 'foreground', 'Foreground Priority', 
+                         "If True, NPC renders in front of blocks. If not set, uses default.")
 
-        # Hitbox
-        add_dual_spin("Hitbox", 'width', 'height', "Width:", "Height:", 1, 1024, "width", "height")
+        control_layout.addSpacing(5)
 
-        self.chk_fg = QCheckBox("True")
-        self.chk_fg.stateChanged.connect(self.on_change)
-        self.form_layout.addRow("Foreground Priority", self.chk_fg)
+        # === SECTION: COLLISION ===
+        self.section_col = CollapsibleBox("Collision")
+        control_layout.addWidget(self.section_col)
 
-        control_layout.addLayout(self.form_layout)
+        add_dual_spin(self.section_col, "Hitbox", 'width', 'height', "Width:", "Height:", 1, 1024, "width", "height")
+        
+        # Boolean collision properties
+        add_tristate_bool(self.section_col, 'noblockcollision', 'No Block Collision',
+                         "If true, NPC won't interact with blocks/NPCs (unless thrown)")
+        add_tristate_bool(self.section_col, 'npcblock', 'NPC Block',
+                         "Whether this NPC blocks other NPCs' movement")
+        add_tristate_bool(self.section_col, 'npcblocktop', 'NPC Block Top',
+                         "Whether thrown NPCs bounce off this NPC from the top")
+        add_tristate_bool(self.section_col, 'playerblock', 'Player Block',
+                         "Whether this NPC blocks player movement")
+        add_tristate_bool(self.section_col, 'playerblocktop', 'Player Block Top',
+                         "Whether players/NPCs can stand on this NPC")
         
         # 3. View Settings
+        control_layout.addSpacing(10)
         view_box = QFrame()
         view_box.setFrameStyle(QFrame.Shape.StyledPanel)
         view_layout = QVBoxLayout(view_box)
@@ -127,9 +251,8 @@ class MainWindow(QMainWindow):
         dir_layout.addWidget(self.rb_right)
         view_layout.addLayout(dir_layout)
 
-        control_layout.addWidget(view_box)
-        
         control_layout.addStretch()
+        control_layout.addWidget(view_box)
         layout.addWidget(control_panel)
 
         # --- Right Panel (Preview) ---
@@ -143,7 +266,6 @@ class MainWindow(QMainWindow):
         self.btn_hitbox_mode.move(10, 10)
         self.btn_hitbox_mode.resize(180, 30)
         self.btn_hitbox_mode.setCursor(Qt.CursorShape.PointingHandCursor)
-        
         self.btn_hitbox_mode.setStyleSheet("""
             QPushButton {
                 background-color: rgba(50, 50, 50, 200);
@@ -162,7 +284,6 @@ class MainWindow(QMainWindow):
         """)
         self.btn_hitbox_mode.toggled.connect(self.on_mode_toggle)
 
-
     def load_file(self):
         fname, _ = QFileDialog.getOpenFileName(self, "Open NPC Txt", "", "Text Files (*.txt)")
         if fname:
@@ -179,6 +300,7 @@ class MainWindow(QMainWindow):
         p = self.npc_data.params
         self.block_signals_all(True)
         
+        # Regular integer parameters
         self.inputs['frames'].setValue(p.get('frames', 1))
         self.inputs['framespeed'].setValue(p.get('framespeed', 8))
         self.inputs['gfxwidth'].setValue(p.get('gfxwidth', 32))
@@ -191,8 +313,10 @@ class MainWindow(QMainWindow):
         style = p.get('framestyle', 0)
         if 0 <= style <= 2:
             self.combo_style.setCurrentIndex(style)
-            
-        self.chk_fg.setChecked(p.get('foreground', False))
+        
+        # Tri-state boolean parameters
+        for key, widget in self.bool_inputs.items():
+            widget.set_state(p.get(key))
         
         self.block_signals_all(False)
         self.preview.update_timer()
@@ -219,7 +343,10 @@ class MainWindow(QMainWindow):
         p['gfxoffsetx'] = self.inputs['gfxoffsetx'].value()
         p['gfxoffsety'] = self.inputs['gfxoffsety'].value()
         p['framestyle'] = self.combo_style.currentIndex()
-        p['foreground'] = self.chk_fg.isChecked()
+        
+        # Update tri-state booleans
+        for key, widget in self.bool_inputs.items():
+            p[key] = widget.get_state()
 
     def on_change(self):
         self.update_data_from_ui()
@@ -240,5 +367,6 @@ class MainWindow(QMainWindow):
     def block_signals_all(self, b):
         for w in self.inputs.values():
             w.blockSignals(b)
+        for w in self.bool_inputs.values():
+            w.blockSignals(b)
         self.combo_style.blockSignals(b)
-        self.chk_fg.blockSignals(b)
