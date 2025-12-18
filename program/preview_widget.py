@@ -5,7 +5,6 @@ from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QCursor
 
 class AnimationPreview(QWidget):
     zoomChanged = pyqtSignal(int)
-    # New signal to tell UI to update SpinBoxes when we drag visually
     dataChanged = pyqtSignal()
 
     def __init__(self, data):
@@ -18,22 +17,23 @@ class AnimationPreview(QWidget):
         self.show_direction = 0 
         self.zoom = 2
         
-        # Panning
         self.pan_x = 0
         self.pan_y = 0
         self.is_panning = False
         self.last_mouse_pos = None
 
-        # Editing / Dragging
-        self.is_hitbox_mode = False # False = Graphics, True = Hitbox
-        self.hover_edge = None # 'L', 'R', 'T', 'B'
-        self.is_resizing = False
+        self.is_hitbox_mode = False 
+        self.hover_state = None
+        self.is_dragging = False
         
-        # Colors
+        # --- NEW: Store the loaded image path ---
+        self.image_path = ""
+
         self.bg_color = QColor(80, 80, 80)
         self.grid_color = QColor(60, 60, 60)
         
-        self.setMouseTracking(True) # Required to see hover cursor changes
+        self.setMouseTracking(True)
+        self.setMinimumSize(400, 400)
         self.update_timer()
 
     def set_hitbox_mode(self, enabled):
@@ -45,86 +45,86 @@ class AnimationPreview(QWidget):
         self.update()
 
     def load_image(self):
-        if not self.data.filepath: return
+        # Reset path before trying to load
+        self.image_path = ""
+        self.pixmap = None
+
+        if not self.data.filepath: 
+            self.update()
+            return
+        
         base = os.path.splitext(self.data.filepath)[0]
         for ext in ['.png', '.gif', '.bmp']:
-            if os.path.exists(base + ext):
-                self.pixmap = QPixmap(base + ext)
-                self.update()
-                return
-        self.pixmap = None
+            path = base + ext
+            if os.path.exists(path):
+                # --- NEW: Store the path ---
+                self.image_path = path 
+                self.pixmap = QPixmap(self.image_path)
+                break # Found one, stop looking
+        
         self.update()
 
+    # (The rest of preview_widget.py remains the same)
     def update_timer(self):
-        speed = self.data.params['framespeed']
+        speed = self.data.standard_params.get('framespeed', 8)
+        if speed is None: speed = 8
         if speed < 1: speed = 1
         ms = int(speed * (1000 / 64))
         self.timer.start(ms)
 
     def next_frame(self):
-        total_frames = self.data.params['frames']
+        total_frames = self.data.standard_params.get('frames', 1)
+        if total_frames is None: total_frames = 1
         if total_frames < 1: total_frames = 1
         self.current_frame = (self.current_frame + 1) % total_frames
         self.update()
 
-    # --- COORDINATE HELPERS ---
     def get_logical_pos(self, screen_pos):
-        """Convert screen pixel to logical game pixel."""
         cx, cy = self.width() // 2, self.height() // 2
-        # Reverse the paint transformation
-        # x_screen = (x_logical * zoom) + cx + pan_x
-        # x_logical = (x_screen - cx - pan_x) / zoom
         lx = (screen_pos.x() - cx - self.pan_x) / self.zoom
         ly = (screen_pos.y() - cy - self.pan_y) / self.zoom
+        p = self.data.standard_params
+        style = int(p.get('framestyle', 0) or 0)
+        if style == 0 and self.show_direction == 1:
+            lx = -lx
         return lx, ly
 
     def get_active_rect(self):
-        """Returns the logical QRectF of the currently editable box."""
-        p = self.data.params
-        
+        p = self.data.standard_params
         if self.is_hitbox_mode:
-            # Hitbox is centered at 0,0 relative to our logic
-            w, h = p['width'], p['height']
+            w = int(p.get('width', 32) or 32)
+            h = int(p.get('height', 32) or 32)
             return QRectF(-w/2, -h/2, w, h)
         else:
-            # Graphics Rect
-            fw, fh = p['gfxwidth'], p['gfxheight']
-            ox, oy = p['gfxoffsetx'], p['gfxoffsety']
-            ph = p['height']
-            
-            # Logic from paintEvent:
-            # y = (hitbox_y + ph) - fh + oy
-            # Since hitbox_y is -ph/2
-            # y = (-ph/2 + ph) - fh + oy = ph/2 - fh + oy
-            
+            fw = int(p.get('gfxwidth', 32) or 32)
+            fh = int(p.get('gfxheight', 32) or 32)
+            ox = int(p.get('gfxoffsetx', 0) or 0)
+            oy = int(p.get('gfxoffsety', 0) or 0)
+            ph = int(p.get('height', 32) or 32)
+            style = int(p.get('framestyle', 0) or 0)
+            if style >= 1 and self.show_direction == 1:
+                ox = -ox
             x = -fw / 2 + ox
             y = (ph / 2) - fh + oy
             return QRectF(x, y, fw, fh)
 
     def check_hover_edge(self, lx, ly):
-        """Determines if mouse is near an edge of the active rect."""
         rect = self.get_active_rect()
         if not rect: return None
-        
-        tol = 6 / self.zoom # Tolerance in logical pixels (approx 6 screen pixels)
+        tol = 6 / self.zoom
         if tol < 1: tol = 1
-
         l, r = rect.left(), rect.right()
         t, b = rect.top(), rect.bottom()
-        
-        # Check Vertical Edges
         if t - tol <= ly <= b + tol:
             if abs(lx - l) < tol: return 'L'
             if abs(lx - r) < tol: return 'R'
-            
-        # Check Horizontal Edges
         if l - tol <= lx <= r + tol:
             if abs(ly - t) < tol: return 'T'
             if abs(ly - b) < tol: return 'B'
-            
+        if l < lx < r and t < ly < b:
+            return 'MOVE'
         return None
 
-    # --- INPUT EVENTS ---
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
         new_zoom = self.zoom + (1 if delta > 0 else -1)
@@ -136,27 +136,21 @@ class AnimationPreview(QWidget):
 
     def mousePressEvent(self, event):
         self.last_mouse_pos = event.pos()
-        
         if event.button() == Qt.MouseButton.RightButton:
             self.is_panning = True
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
         elif event.button() == Qt.MouseButton.LeftButton:
-            if self.hover_edge:
-                self.is_resizing = True
-            else:
-                pass # Clicked empty space
+            if self.hover_state:
+                self.is_dragging = True
 
     def mouseReleaseEvent(self, event):
         self.is_panning = False
-        self.is_resizing = False
+        self.is_dragging = False
         self.setCursor(Qt.CursorShape.ArrowCursor)
-        # Re-check hover to set correct cursor immediately
         self.mouseMoveEvent(event)
 
     def mouseMoveEvent(self, event):
         lx, ly = self.get_logical_pos(event.pos())
-
-        # 1. HANDLE PANNING
         if self.is_panning:
             delta = event.pos() - self.last_mouse_pos
             self.pan_x += delta.x()
@@ -165,141 +159,106 @@ class AnimationPreview(QWidget):
             self.update()
             return
 
-        # 2. HANDLE RESIZING
-        if self.is_resizing:
+        if self.is_dragging:
             delta_screen = event.pos() - self.last_mouse_pos
-            # Convert screen delta to logical delta (rounding to nearest int for pixel art feel)
             dx = int(delta_screen.x() / self.zoom)
             dy = int(delta_screen.y() / self.zoom)
-            
-            p = self.data.params
-            
-            # Prevent ultra-fast updates if zoom is high but mouse moved little
-            if dx == 0 and dy == 0: return 
-
-            if self.is_hitbox_mode:
-                # HITBOX EDITING (Symmetric)
-                # Hitbox is center-anchored. Growing 'Right' adds to width. 
-                # Since it stays centered, it effectively grows both sides visually.
-                if self.hover_edge == 'R': p['width'] += dx
-                elif self.hover_edge == 'L': p['width'] -= dx
-                elif self.hover_edge == 'B': p['height'] += dy
-                elif self.hover_edge == 'T': p['height'] -= dy
+            if dx == 0 and dy == 0: return
+            p = self.data.standard_params
+            style = int(p.get('framestyle', 0) or 0)
+            if style == 0 and self.show_direction == 1:
+                dx = -dx
+            visual_offset_inverted = (style >= 1 and self.show_direction == 1)
+            if self.hover_state == 'MOVE':
+                if not self.is_hitbox_mode:
+                    if visual_offset_inverted:
+                        p['gfxoffsetx'] -= dx
+                    else:
+                        p['gfxoffsetx'] += dx
+                    p['gfxoffsety'] += dy
+            elif self.is_hitbox_mode:
+                if self.hover_state == 'R': p['width'] += dx
+                elif self.hover_state == 'L': p['width'] -= dx
+                elif self.hover_state == 'B': p['height'] += dy
+                elif self.hover_state == 'T': p['height'] -= dy
             else:
-                # GRAPHICS EDITING
-                if self.hover_edge == 'R': 
-                    p['gfxwidth'] += dx
-                    # Optional: Compensate offset if you want it to grow one-sided?
-                    # For now, changing width expands from center of sprite logic
-                elif self.hover_edge == 'L':
-                    p['gfxwidth'] -= dx
-                elif self.hover_edge == 'B':
-                    p['gfxheight'] += dy
-                elif self.hover_edge == 'T':
-                    p['gfxheight'] -= dy
-            
-            # Clamp values to prevent crash or negative sizes
+                if self.hover_state == 'R': p['gfxwidth'] += dx
+                elif self.hover_state == 'L': p['gfxwidth'] -= dx
+                elif self.hover_state == 'B': p['gfxheight'] += dy
+                elif self.hover_state == 'T': p['gfxheight'] -= dy
             p['width'] = max(1, p['width'])
             p['height'] = max(1, p['height'])
             p['gfxwidth'] = max(1, p['gfxwidth'])
             p['gfxheight'] = max(1, p['gfxheight'])
-
             self.last_mouse_pos = event.pos()
-            self.dataChanged.emit() # Update UI
+            self.dataChanged.emit()
             self.update()
             return
 
-        # 3. HANDLE HOVER (Set Cursor)
-        edge = self.check_hover_edge(lx, ly)
-        self.hover_edge = edge
-        
-        if edge in ['L', 'R']:
-            self.setCursor(Qt.CursorShape.SizeHorCursor)
-        elif edge in ['T', 'B']:
-            self.setCursor(Qt.CursorShape.SizeVerCursor)
-        else:
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+        state = self.check_hover_edge(lx, ly)
+        self.hover_state = state
+        if state in ['L', 'R']: self.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif state in ['T', 'B']: self.setCursor(Qt.CursorShape.SizeVerCursor)
+        elif state == 'MOVE':
+            self.setCursor(Qt.CursorShape.ArrowCursor if self.is_hitbox_mode else Qt.CursorShape.SizeAllCursor)
+        else: self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), self.bg_color)
-        
         cx, cy = self.width() // 2, self.height() // 2
-
         painter.save()
         painter.translate(cx, cy)
-        painter.translate(self.pan_x, self.pan_y) # Apply Pan BEFORE Scale
+        painter.translate(self.pan_x, self.pan_y)
         painter.scale(self.zoom, self.zoom)
-        
-        # Draw Grid
-        grid_size = 16 
+        grid_size = 16
         steps_x = int((self.width() / self.zoom) / 2 / grid_size) + 2
         steps_y = int((self.height() / self.zoom) / 2 / grid_size) + 2
         painter.setPen(QPen(self.grid_color, 0))
-        
         for i in range(-steps_x, steps_x + 1):
             x = i * grid_size
-            painter.drawLine(x, -steps_y*grid_size, x, steps_y*grid_size)
+            painter.drawLine(x, -steps_y * grid_size, x, steps_y * grid_size)
         for i in range(-steps_y, steps_y + 1):
             y = i * grid_size
-            painter.drawLine(-steps_x*grid_size, y, steps_x*grid_size, y)
-
-        # Params
-        p = self.data.params
-        fw, fh = p['gfxwidth'], p['gfxheight']
-        frames = p['frames']
-        style = p['framestyle']
-        ox, oy = p['gfxoffsetx'], p['gfxoffsety']
-        pw, ph = p['width'], p['height']
-
-        # 1. Draw Hitbox
-        # Hitbox is always centered at (0,0) in logical space
-        hitbox_rect = QRectF(-pw/2, -ph/2, pw, ph)
-        
-        # Style based on mode
-        if self.is_hitbox_mode:
-            pen = QPen(QColor(0, 255, 0), 2) # Thick Green
-            pen.setCosmetic(True) # Keeps thickness constant on screen (doesn't scale with zoom)
-            painter.setPen(pen)
-        else:
-            pen = QPen(QColor(0, 255, 0, 100), 1) # Thin Faint Green
-            pen.setCosmetic(True)
-            painter.setPen(pen)
-            
+            painter.drawLine(-steps_x * grid_size, y, steps_x * grid_size, y)
+        p = self.data.standard_params
+        fw = int(p.get('gfxwidth', 32) or 32)
+        fh = int(p.get('gfxheight', 32) or 32)
+        frames = int(p.get('frames', 1) or 1)
+        style = int(p.get('framestyle', 0) or 0)
+        ox = int(p.get('gfxoffsetx', 0) or 0)
+        oy = int(p.get('gfxoffsety', 0) or 0)
+        pw = int(p.get('width', 32) or 32)
+        ph = int(p.get('height', 32) or 32)
+        hitbox_rect = QRectF(-pw / 2, -ph / 2, pw, ph)
+        pen = QPen(QColor(0, 255, 0), 2) if self.is_hitbox_mode else QPen(QColor(0, 255, 0, 100), 1)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
         painter.drawRect(hitbox_rect)
-
-        # 2. Draw Sprite
         if self.pixmap:
+            painter.save()
             row_offset = 0
-            if style == 1 and self.show_direction == 1: row_offset = frames
-            elif style == 2 and self.show_direction == 1: row_offset = frames
-            
+            is_facing_right = (self.show_direction == 1)
+            if style == 0:
+                if is_facing_right:
+                    painter.scale(-1, 1)
+            elif style >= 1:
+                if is_facing_right:
+                    row_offset = frames
+                    ox = -ox
             src_y = (row_offset + self.current_frame) * fh
             src_rect = QRect(0, src_y, fw, fh)
-
-            # Logic: y = (ph/2) - fh + oy
-            dest_x = -fw/2 + ox
-            dest_y = (ph/2) - fh + oy
+            dest_x = -fw / 2 + ox
+            dest_y = (ph / 2) - fh + oy
             dest_rect = QRectF(dest_x, dest_y, fw, fh)
-
             painter.drawPixmap(dest_rect.toRect(), self.pixmap, src_rect)
-            
-            # GFX Border
-            if not self.is_hitbox_mode:
-                pen = QPen(QColor(255, 50, 50), 2, Qt.PenStyle.SolidLine) # Thick Red
-                pen.setCosmetic(True)
-                painter.setPen(pen)
-            else:
-                pen = QPen(QColor(255, 50, 50, 100), 1, Qt.PenStyle.DashLine) # Faint Red
-                pen.setCosmetic(True)
-                painter.setPen(pen)
-                
+            pen = QPen(QColor(255, 50, 50), 2, Qt.PenStyle.SolidLine) if not self.is_hitbox_mode else QPen(QColor(255, 50, 50, 100), 1, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
             painter.drawRect(dest_rect)
-
+            painter.restore()
         painter.restore()
-
-        # Text Overlay
         painter.setPen(Qt.GlobalColor.white)
         mode_text = "[HITBOX MODE]" if self.is_hitbox_mode else "[GRAPHIC MODE]"
-        info = f"{mode_text} | Frame: {self.current_frame+1}/{frames} | Zoom: {self.zoom}x"
+        info = f"{mode_text} | Frame: {self.current_frame + 1}/{frames} | Zoom: {self.zoom}x"
         painter.drawText(10, self.height() - 10, info)
