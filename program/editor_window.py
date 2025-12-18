@@ -4,11 +4,16 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QRadioButton, QFileDialog, QFrame, QPushButton, 
                              QFormLayout, QSizePolicy, QToolButton, QScrollArea,
                              QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-                             QButtonGroup, QSplitter)
+                             QButtonGroup, QSplitter, QStatusBar)
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QFileSystemWatcher
+from PyQt6.QtGui import QUndoStack, QAction, QKeySequence
 from .npc_data import NPCData
 from .npc_definitions import NPC_DEFS
 from .preview_widget import AnimationPreview
+from .undo_commands import (ChangeParameterCommand, ChangeMultipleParametersCommand,
+                            ToggleParameterCommand, AddCustomParameterCommand,
+                            RemoveCustomParameterCommand, ChangeCustomParameterCommand)
+from .validated_widgets import ValidatedSpinBox, ValidatedDoubleSpinBox
 
 # --- TriStateBoolWidget (Unchanged) ---
 class TriStateBoolWidget(QWidget):
@@ -120,6 +125,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("SMBX NPC Editor")
         self.resize(1100, 800)
         
+        # Undo/Redo Stack
+        self.undo_stack = QUndoStack(self)
+        self.undo_stack.setUndoLimit(50)  # Keep last 50 actions
+        
         self.npc_data = NPCData()
         self.ui_sections = {}
         self.all_widgets = {}
@@ -128,9 +137,18 @@ class MainWindow(QMainWindow):
 
         self.is_saving = False
         self.watched_files = []
+        self.is_loading = False  # Flag to prevent undo during load
         
         self.watcher = QFileSystemWatcher(self)
         self.watcher.fileChanged.connect(self.on_external_file_change)
+        
+        # Setup Menu Bar with Undo/Redo
+        self.setup_menu_bar()
+        
+        # Status Bar
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("Ready")
         
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -143,16 +161,6 @@ class MainWindow(QMainWindow):
         scroll.setMinimumWidth(450)
         scroll_content = QWidget()
         self.form_layout = QVBoxLayout(scroll_content)
-        
-        btn_layout = QHBoxLayout()
-        btn_load = QPushButton("Load .txt")
-        btn_load.clicked.connect(self.load_file)
-        btn_save = QPushButton("Save .txt")
-        btn_save.clicked.connect(self.save_file)
-        btn_layout.addWidget(btn_load)
-        btn_layout.addWidget(btn_save)
-        self.form_layout.addLayout(btn_layout)
-        self.form_layout.addSpacing(10)
 
         self.generate_standard_ui()
 
@@ -202,7 +210,7 @@ class MainWindow(QMainWindow):
         r_layout.addLayout(view_ctrl)
 
         self.preview = AnimationPreview(self.npc_data)
-        self.preview.dataChanged.connect(self.sync_ui_from_visual) 
+        self.preview.dataChanged.connect(self.on_visual_drag_finished)
         r_layout.addWidget(self.preview)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 1)
@@ -216,12 +224,58 @@ class MainWindow(QMainWindow):
         self.btn_hitbox_mode.setStyleSheet("QPushButton { background-color: rgba(50,50,50,200); color: white; border: 1px solid #555; } QPushButton:checked { background-color: #2e7d32; }")
         self.btn_hitbox_mode.toggled.connect(self.on_mode_toggle)
 
+    def setup_menu_bar(self):
+        """Setup menu bar with undo/redo actions"""
+        menubar = self.menuBar()
+        
+        # File Menu
+        file_menu = menubar.addMenu("&File")
+        
+        action_load = QAction("&Open...", self)
+        action_load.setShortcut(QKeySequence.StandardKey.Open)
+        action_load.triggered.connect(self.load_file)
+        file_menu.addAction(action_load)
+        
+        action_save = QAction("&Save", self)
+        action_save.setShortcut(QKeySequence.StandardKey.Save)
+        action_save.triggered.connect(self.save_file)
+        file_menu.addAction(action_save)
+        
+        file_menu.addSeparator()
+        
+        action_exit = QAction("E&xit", self)
+        action_exit.setShortcut(QKeySequence.StandardKey.Quit)
+        action_exit.triggered.connect(self.close)
+        file_menu.addAction(action_exit)
+        
+        # Edit Menu
+        edit_menu = menubar.addMenu("&Edit")
+        
+        # Undo Action
+        self.action_undo = self.undo_stack.createUndoAction(self, "&Undo")
+        self.action_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        edit_menu.addAction(self.action_undo)
+        
+        # Redo Action
+        self.action_redo = self.undo_stack.createRedoAction(self, "&Redo")
+        self.action_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        edit_menu.addAction(self.action_redo)
+        
+        # Connect undo stack signals for status updates
+        self.undo_stack.indexChanged.connect(self.on_undo_stack_changed)
+
+    def on_undo_stack_changed(self, idx):
+        """Update status bar when undo/redo occurs"""
+        if self.undo_stack.canUndo():
+            self.status_bar.showMessage(f"Action: {self.undo_stack.undoText()}", 3000)
+
     def _register_widget(self, key, widget):
         self.all_widgets[key] = widget
 
     def _get_widget_value(self, widget):
         if isinstance(widget, TriStateBoolWidget): return widget.get_state()
-        elif isinstance(widget, (QSpinBox, QDoubleSpinBox)): return widget.value()
+        elif isinstance(widget, (QSpinBox, QDoubleSpinBox, ValidatedSpinBox, ValidatedDoubleSpinBox)): 
+            return widget.value()
         elif isinstance(widget, QLineEdit): return widget.text() if widget.text() else None
         elif isinstance(widget, QComboBox): return widget.currentData()
         return None
@@ -231,23 +285,23 @@ class MainWindow(QMainWindow):
         widget = None
         if dtype == bool:
             widget = TriStateBoolWidget()
-            widget.stateChanged.connect(self.on_standard_change)
+            widget.stateChanged.connect(lambda: self.on_standard_change(key))
         elif dtype == int:
-            widget = QSpinBox()
+            widget = ValidatedSpinBox()  # Use validated version
             widget.setRange(definition.get('min', -9999), definition.get('max', 9999))
-            widget.valueChanged.connect(self.on_standard_change)
+            widget.valueChanged.connect(lambda: self.on_standard_change(key))
         elif dtype == float:
-            widget = QDoubleSpinBox()
+            widget = ValidatedDoubleSpinBox()  # Use validated version
             widget.setRange(definition.get('min', -9999.0), definition.get('max', 9999.0))
             widget.setSingleStep(definition.get('step', 0.1))
-            widget.valueChanged.connect(self.on_standard_change)
+            widget.valueChanged.connect(lambda: self.on_standard_change(key))
         elif dtype == str:
             widget = QLineEdit()
-            widget.textChanged.connect(self.on_standard_change)
+            widget.textChanged.connect(lambda: self.on_standard_change(key))
         elif dtype == "enum":
             widget = QComboBox()
             for k, v in definition.get('choices', {}).items(): widget.addItem(v, k)
-            widget.currentIndexChanged.connect(self.on_standard_change)
+            widget.currentIndexChanged.connect(lambda: self.on_standard_change(key))
         
         if widget:
             widget.setToolTip(definition.get('tips', key))
@@ -280,19 +334,19 @@ class MainWindow(QMainWindow):
         lay.addWidget(chk)
 
         if sublabel1: lay.addWidget(QLabel(sublabel1))
-        w1 = QSpinBox()
+        w1 = ValidatedSpinBox()  # Use validated version
         w1.setRange(def1.get('min', -9999), def1.get('max', 9999))
         w1.setToolTip(def1.get('tips', key1))
         w1.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        w1.valueChanged.connect(self.on_standard_change)
+        w1.valueChanged.connect(lambda: self.on_standard_change(key1))
         lay.addWidget(w1)
         
         if sublabel2: lay.addWidget(QLabel(sublabel2))
-        w2 = QSpinBox()
+        w2 = ValidatedSpinBox()  # Use validated version
         w2.setRange(def2.get('min', -9999), def2.get('max', 9999))
         w2.setToolTip(def2.get('tips', key2))
         w2.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        w2.valueChanged.connect(self.on_standard_change)
+        w2.valueChanged.connect(lambda: self.on_standard_change(key2))
         lay.addWidget(w2)
         
         section.add_row(label_row, container)
@@ -335,11 +389,16 @@ class MainWindow(QMainWindow):
     def load_file(self):
         fname, _ = QFileDialog.getOpenFileName(self, "Open NPC Txt", "", "Text Files (*.txt)")
         if fname:
+            self.is_loading = True
             if self.npc_data.load(fname):
                 self.update_ui_from_data()
                 self.preview.load_image()
                 self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
                 self._update_file_watcher()
+                # Clear undo stack when loading new file
+                self.undo_stack.clear()
+                self.status_bar.showMessage(f"Loaded: {os.path.basename(fname)}", 5000)
+            self.is_loading = False
 
     def save_file(self):
         # 1. Handle "Save As" if no file is currently loaded
@@ -351,11 +410,10 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
             self._update_file_watcher()
 
-        # 2. Force synchronization
-        self.on_standard_change() 
-        self.on_custom_table_change()
+        # 2. Save
         self.is_saving = True
         self.npc_data.save()
+        self.status_bar.showMessage(f"Saved: {os.path.basename(self.npc_data.filepath)}", 3000)
         QTimer.singleShot(500, lambda: setattr(self, 'is_saving', False))
 
     def update_ui_from_data(self):
@@ -375,7 +433,8 @@ class MainWindow(QMainWindow):
             
             display_val = val if val is not None else default
             if isinstance(widget, TriStateBoolWidget): widget.set_state(display_val)
-            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)): widget.setValue(display_val)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, ValidatedSpinBox, ValidatedDoubleSpinBox)): 
+                widget.setValue(display_val)
             elif isinstance(widget, QLineEdit): widget.setText(str(display_val))
             elif isinstance(widget, QComboBox):
                 idx = widget.findData(display_val)
@@ -407,38 +466,159 @@ class MainWindow(QMainWindow):
         self.preview.update_timer()
         self.preview.update()
 
-    def on_standard_change(self):
-        for key in self.all_widgets.keys():
-            widget = self.all_widgets.get(key)
-            chk = self.param_checkboxes.get(key)
-            if not widget or not chk: continue
-            
-            if not chk.isChecked():
-                self.npc_data.set_standard(key, None)
-                continue
-            
-            val = self._get_widget_value(widget)
-            if isinstance(widget, TriStateBoolWidget) and val is None:
-                self.npc_data.set_standard(key, None)
-            else:
-                self.npc_data.set_standard(key, val)
-
+    def on_standard_change(self, key):
+        """Handle standard parameter change with undo support"""
+        if self.is_loading:
+            return  # Don't create undo commands during file load
+        
+        widget = self.all_widgets.get(key)
+        chk = self.param_checkboxes.get(key)
+        if not widget or not chk:
+            return
+        
+        if not chk.isChecked():
+            return  # Parameter is disabled
+        
+        new_value = self._get_widget_value(widget)
+        old_value = self.npc_data.standard_params.get(key)
+        
+        # Don't create command if value unchanged
+        if new_value == old_value:
+            return
+        
+        # Create undo command
+        cmd = ChangeParameterCommand(
+            self.npc_data,
+            key,
+            old_value,
+            new_value,
+            ui_callback=self.update_single_widget
+        )
+        self.undo_stack.push(cmd)
+        
         self.preview.update_timer()
         self.preview.update()
 
     def on_param_enabled(self, key, checked):
+        """Handle parameter enable/disable with undo support"""
+        if self.is_loading:
+            widget = self.all_widgets.get(key)
+            if widget:
+                widget.setEnabled(checked)
+            return
+        
         widget = self.all_widgets.get(key)
-        if not widget: return
-        widget.setEnabled(checked)
-        if checked:
-            val = self._get_widget_value(widget)
-            self.npc_data.set_standard(key, val)
-        else:
-            self.npc_data.set_standard(key, None)
+        if not widget:
+            return
+        
+        old_enabled = self.npc_data.standard_params.get(key) is not None
+        value = self._get_widget_value(widget) if checked else None
+        
+        # Create undo command
+        cmd = ToggleParameterCommand(
+            self.npc_data,
+            key,
+            old_enabled,
+            checked,
+            value,
+            ui_callback=self.update_single_checkbox
+        )
+        self.undo_stack.push(cmd)
+        
         self.preview.update_timer()
         self.preview.update()
 
+    def update_single_widget(self, key, value):
+        """Update a single widget from undo/redo"""
+        widget = self.all_widgets.get(key)
+        if not widget:
+            return
+        
+        widget.blockSignals(True)
+        
+        if value is None:
+            # Use default
+            default = NPC_DEFS[key]['default']
+            if isinstance(widget, TriStateBoolWidget):
+                widget.set_state(default)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, ValidatedSpinBox, ValidatedDoubleSpinBox)):
+                widget.setValue(default)
+            elif isinstance(widget, QLineEdit):
+                widget.setText(str(default))
+        else:
+            if isinstance(widget, TriStateBoolWidget):
+                widget.set_state(value)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, ValidatedSpinBox, ValidatedDoubleSpinBox)):
+                widget.setValue(value)
+            elif isinstance(widget, QLineEdit):
+                widget.setText(str(value))
+            elif isinstance(widget, QComboBox):
+                idx = widget.findData(value)
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+        
+        widget.blockSignals(False)
+        self.preview.update_timer()
+        self.preview.update()
+
+    def update_single_checkbox(self, key, enabled):
+        """Update checkbox state from undo/redo"""
+        chk = self.param_checkboxes.get(key)
+        widget = self.all_widgets.get(key)
+        
+        if chk:
+            chk.blockSignals(True)
+            chk.setChecked(enabled)
+            chk.blockSignals(False)
+        
+        if widget:
+            widget.setEnabled(enabled)
+
+    def on_visual_drag_finished(self):
+        """Handle visual drag completion with undo support"""
+        if self.is_loading:
+            return
+        
+        # Collect all changed keys
+        changes = {}
+        keys_to_check = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
+        
+        for key in keys_to_check:
+            widget = self.all_widgets.get(key)
+            if not widget:
+                continue
+            
+            new_val = self.npc_data.standard_params.get(key)
+            
+            # Get the old value from widget (it hasn't been updated yet)
+            widget.blockSignals(True)
+            old_val = widget.value()
+            widget.blockSignals(False)
+            
+            if new_val != old_val:
+                changes[key] = (old_val, new_val)
+                
+                # Enable checkbox if needed
+                chk = self.param_checkboxes.get(key)
+                if chk and not chk.isChecked():
+                    chk.blockSignals(True)
+                    chk.setChecked(True)
+                    chk.blockSignals(False)
+        
+        if changes:
+            cmd = ChangeMultipleParametersCommand(
+                self.npc_data,
+                changes,
+                ui_callback=self.update_single_widget,
+                description="Visual edit"
+            )
+            self.undo_stack.push(cmd)
+        
+        # Update widgets to show new values
+        self.sync_ui_from_visual()
+
     def sync_ui_from_visual(self):
+        """Update UI widgets from visual changes"""
         p = self.npc_data.standard_params
         keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
         for key in keys:
@@ -448,11 +628,6 @@ class MainWindow(QMainWindow):
                 widget.blockSignals(True)
                 widget.setValue(val)
                 widget.blockSignals(False)
-                
-                # Check box if needed, but DO NOT BLOCK SIGNALS
-                chk = self.param_checkboxes.get(key)
-                if chk and not chk.isChecked():
-                    chk.setChecked(True)
 
     def _update_file_watcher(self):
         if self.watched_files: self.watcher.removePaths(self.watched_files)
@@ -473,10 +648,14 @@ class MainWindow(QMainWindow):
             
         if path == self.npc_data.filepath:
             print(f"External reload: {path}")
+            self.is_loading = True
             if self.npc_data.load(path):
                 self.update_ui_from_data()
+            self.is_loading = False
+            self.status_bar.showMessage("File reloaded (external change)", 3000)
         elif path == self.preview.image_path:
             self.preview.load_image()
+            self.status_bar.showMessage("Image reloaded", 2000)
             
         # Re-add to watcher
         if path in self.watched_files:
@@ -484,25 +663,67 @@ class MainWindow(QMainWindow):
             self.watcher.addPath(path)
 
     def on_custom_table_change(self):
+        """Handle custom table edits (currently without undo - TODO)"""
         self.npc_data.custom_params = {}
         for r in range(self.custom_table.rowCount()):
             k_item = self.custom_table.item(r, 0)
             v_item = self.custom_table.item(r, 1)
             if k_item and v_item and k_item.text().strip():
                 self.npc_data.set_custom(k_item.text().strip(), v_item.text().strip())
+    
     def add_custom_row(self):
-        row = self.custom_table.rowCount()
-        self.custom_table.insertRow(row)
-        self.custom_table.setItem(row, 0, QTableWidgetItem("new_param"))
-        self.custom_table.setItem(row, 1, QTableWidgetItem("0"))
+        """Add custom parameter with undo support"""
+        if self.is_loading:
+            return
+        
+        key = f"new_param_{self.custom_table.rowCount()}"
+        value = "0"
+        
+        cmd = AddCustomParameterCommand(
+            self.npc_data,
+            key,
+            value,
+            ui_callback=self.refresh_custom_table
+        )
+        self.undo_stack.push(cmd)
+    
     def remove_custom_row(self):
+        """Remove custom parameter with undo support"""
+        if self.is_loading:
+            return
+        
         cur = self.custom_table.currentRow()
         if cur >= 0:
-            self.custom_table.removeRow(cur)
-            self.on_custom_table_change()
+            k_item = self.custom_table.item(cur, 0)
+            v_item = self.custom_table.item(cur, 1)
+            
+            if k_item:
+                key = k_item.text().strip()
+                old_value = v_item.text().strip() if v_item else ""
+                
+                cmd = RemoveCustomParameterCommand(
+                    self.npc_data,
+                    key,
+                    old_value,
+                    ui_callback=self.refresh_custom_table
+                )
+                self.undo_stack.push(cmd)
+    
+    def refresh_custom_table(self):
+        """Refresh custom table display"""
+        self.custom_table.blockSignals(True)
+        self.custom_table.setRowCount(0)
+        for k, v in self.npc_data.custom_params.items():
+            row = self.custom_table.rowCount()
+            self.custom_table.insertRow(row)
+            self.custom_table.setItem(row, 0, QTableWidgetItem(k))
+            self.custom_table.setItem(row, 1, QTableWidgetItem(str(v)))
+        self.custom_table.blockSignals(False)
+    
     def on_mode_toggle(self, checked):
         self.preview.set_hitbox_mode(checked)
         self.btn_hitbox_mode.setText("Hitbox Mode (ACTIVE)" if checked else "Hitbox Adjustment Mode")
+    
     def on_direction_change(self):
         self.preview.show_direction = 1 if self.rb_right.isChecked() else 0
         self.preview.update()
