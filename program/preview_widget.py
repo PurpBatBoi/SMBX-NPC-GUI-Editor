@@ -5,7 +5,9 @@ from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QCursor
 
 class AnimationPreview(QWidget):
     zoomChanged = pyqtSignal(int)
-    dataChanged = pyqtSignal()
+    dataChanged = pyqtSignal()      # For real-time UI syncing
+    dragStarted = pyqtSignal()      # Fired when user clicks to start a drag
+    dragFinished = pyqtSignal()     # Fired when user releases mouse
 
     def __init__(self, data):
         super().__init__()
@@ -113,12 +115,19 @@ class AnimationPreview(QWidget):
             self.is_panning = True
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
         elif event.button() == Qt.MouseButton.LeftButton:
-            if self.hover_state:
+            lx, ly = self.get_logical_pos(event.pos())
+            state = self.check_hover_edge(lx, ly)
+            if state:
+                self.hover_state = state
                 self.is_dragging = True
+                self.dragStarted.emit() # Notify MainWindow to snapshot values
 
     def mouseReleaseEvent(self, event):
+        if self.is_dragging:
+            self.is_dragging = False
+            self.dragFinished.emit() # Notify MainWindow to push the final Undo command
+        
         self.is_panning = False
-        self.is_dragging = False
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self.mouseMoveEvent(event)
 
@@ -171,7 +180,8 @@ class AnimationPreview(QWidget):
                 if p.get(k) is not None and p[k] < 1: p[k] = 1
 
             self.last_mouse_pos = event.pos()
-            self.dataChanged.emit()
+            # This triggers the UI sync in editor_window, but NOT the undo command
+            self.dataChanged.emit() 
             self.update()
             return
 

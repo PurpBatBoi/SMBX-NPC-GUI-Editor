@@ -122,7 +122,7 @@ class CollapsibleBox(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SMBX NPC Editor")
+        self.setWindowTitle("SMBX Visual NPC Editor")
         self.resize(1100, 800)
         
         # Undo/Redo Stack
@@ -133,7 +133,9 @@ class MainWindow(QMainWindow):
         self.ui_sections = {}
         self.all_widgets = {}
         self.param_checkboxes = {}
-        self.category_keys = {} 
+        self.category_keys = {}
+        # New variable to store values before a visual drag
+        self._drag_snapshot = {}
 
         self.is_saving = False
         self.watched_files = []
@@ -210,7 +212,14 @@ class MainWindow(QMainWindow):
         r_layout.addLayout(view_ctrl)
 
         self.preview = AnimationPreview(self.npc_data)
-        self.preview.dataChanged.connect(self.on_visual_drag_finished)
+        # 1. dataChanged now only synchronizes the SpinBoxes/UI for visual feedback
+        self.preview.dataChanged.connect(self.sync_ui_from_visual)
+        
+        # 2. dragStarted captures the "Before" state
+        self.preview.dragStarted.connect(self.on_visual_drag_start)
+        
+        # 3. dragFinished creates the single Undo command
+        self.preview.dragFinished.connect(self.on_visual_drag_complete)
         r_layout.addWidget(self.preview)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 1)
@@ -618,7 +627,7 @@ class MainWindow(QMainWindow):
         self.sync_ui_from_visual()
 
     def sync_ui_from_visual(self):
-        """Update UI widgets from visual changes"""
+        """Real-time UI update during drag (No Undo commands here)"""
         p = self.npc_data.standard_params
         keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
         for key in keys:
@@ -727,3 +736,41 @@ class MainWindow(QMainWindow):
     def on_direction_change(self):
         self.preview.show_direction = 1 if self.rb_right.isChecked() else 0
         self.preview.update()
+    
+    def on_visual_drag_start(self):
+        """Capture values before the user starts moving the mouse"""
+        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
+        self._drag_snapshot = {k: self.npc_data.standard_params.get(k) for k in keys}
+    
+    def on_visual_drag_complete(self):
+        """Compare current values to snapshot and push one Undo command"""
+        if self.is_loading: return
+        
+        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
+        changes = {}
+        
+        for key in keys:
+            old_val = self._drag_snapshot.get(key)
+            new_val = self.npc_data.standard_params.get(key)
+            
+            if old_val != new_val:
+                changes[key] = (old_val, new_val)
+                
+                # Ensure the checkbox for this parameter is enabled
+                chk = self.param_checkboxes.get(key)
+                if chk and not chk.isChecked():
+                    chk.blockSignals(True)
+                    chk.setChecked(True)
+                    self.all_widgets[key].setEnabled(True)
+                    chk.blockSignals(False)
+        
+        if changes:
+            cmd = ChangeMultipleParametersCommand(
+                self.npc_data,
+                changes,
+                ui_callback=self.update_single_widget,
+                description="Visual Edit"
+            )
+            self.undo_stack.push(cmd)
+        
+        self._drag_snapshot = {}

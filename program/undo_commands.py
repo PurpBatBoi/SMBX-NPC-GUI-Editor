@@ -31,13 +31,14 @@ class ChangeParameterCommand(QUndoCommand):
     def id(self):
         # Return the same ID for commands that modify the same parameter
         # This allows Qt to merge consecutive edits
-        return hash(self.key) & 0x7FFFFFFF  # Ensure positive 32-bit int
+        return hash(self.key) & 0xFFFF
     
     def mergeWith(self, other):
-        """Merge consecutive edits to the same parameter"""
-        if other.key != self.key:
+        # If the other command is the same type and same key...
+        if other.id() != self.id():
             return False
-        # Keep our old_value, take their new_value
+        
+        # Update the target value to the newest one, but KEEP the original old_value
         self.new_value = other.new_value
         return True
 
