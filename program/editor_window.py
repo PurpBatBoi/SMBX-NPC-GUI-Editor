@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
 
         # 2. Form Inputs
         self.form_layout = QFormLayout()
-        self.form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.inputs = {}
         
         def add_spin(internal_key, display_label, min_v, max_v, tip):
@@ -55,43 +55,59 @@ class MainWindow(QMainWindow):
             l.setContentsMargins(0, 0, 0, 0)
             l.setSpacing(5)
 
-            if sub_label1: l.addWidget(QLabel(sub_label1))
+            # --- SPINBOX 1 ---
+            if sub_label1: 
+                lbl1 = QLabel(sub_label1)
+                lbl1.setFixedWidth(35)  # Reduced slightly for better left alignment
+                l.addWidget(lbl1)
+            
             s1 = QSpinBox()
             s1.setRange(min_v, max_v)
             s1.setToolTip(tip1)
             s1.valueChanged.connect(self.on_change)
             s1.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            l.addWidget(s1)
             
-            if sub_label2: l.addWidget(QLabel(sub_label2))
+            # --- SPINBOX 2 ---
+            if sub_label2: 
+                lbl2 = QLabel(sub_label2)
+                lbl2.setStyleSheet("margin-left: 5px;")
+                lbl2.setFixedWidth(40)  # Reduced slightly for better left alignment
+                l.addWidget(lbl2)
+                
             s2 = QSpinBox()
             s2.setRange(min_v, max_v)
             s2.setToolTip(tip2)
             s2.valueChanged.connect(self.on_change)
             s2.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-
-            l.addWidget(s1)
             l.addWidget(s2)
-            
+
             self.inputs[key1] = s1
             self.inputs[key2] = s2
             self.form_layout.addRow(main_label, container)
 
-        add_spin('frames', 'Frames', 1, 100, "Frames per direction")
-        add_spin('framespeed', 'Frame Speed', 1, 100, "Ticks per frame")
+        # -- REORDERED & RENAMED FIELDS --
         
-        add_dual_spin("Graphic Size", 'gfxwidth', 'gfxheight', "W:", "H:", 1, 1024, "Width", "Height")
+        add_spin('frames', 'Frames', 1, 100, "Frames per direction")
+        add_spin('framespeed', 'Frame Speed', 1, 100, "Ticks per Frame (TLDR: Lower, the faster)")
+        
+        # GFX Size
+        add_dual_spin("GFX", 'gfxwidth', 'gfxheight', "Width:", "Height:", 1, 1024, "gfxwidth", "gfxheight")
+        
+        # GFX Offset (Moved up)
+        add_dual_spin("GFX Offset", 'gfxoffsetx', 'gfxoffsety', "X:", "Y:", -500, 500, "gfxoffsetx", "gfxoffsety")
 
         self.combo_style = QComboBox()
         self.combo_style.addItems(["0: Goomba (L=R)", "1: Koopa (Sep L/R)", "2: SMB2 (L/R/UD)"])
         self.combo_style.currentIndexChanged.connect(self.on_change)
         self.form_layout.addRow("Frame Style", self.combo_style)
 
-        add_dual_spin("Hitbox Size", 'width', 'height', "W:", "H:", 1, 1024, "Width", "Height")
-        add_dual_spin("Offset", 'gfxoffsetx', 'gfxoffsety', "X:", "Y:", -500, 500, "X", "Y")
+        # Hitbox
+        add_dual_spin("Hitbox", 'width', 'height', "Width:", "Height:", 1, 1024, "width", "height")
 
-        self.chk_fg = QCheckBox("Enabled")
+        self.chk_fg = QCheckBox("True")
         self.chk_fg.stateChanged.connect(self.on_change)
-        self.form_layout.addRow("Foreground", self.chk_fg)
+        self.form_layout.addRow("Foreground Priority", self.chk_fg)
 
         control_layout.addLayout(self.form_layout)
         
@@ -111,19 +127,6 @@ class MainWindow(QMainWindow):
         dir_layout.addWidget(self.rb_right)
         view_layout.addLayout(dir_layout)
 
-        zoom_layout = QHBoxLayout()
-        zoom_layout.addWidget(QLabel("Zoom:"))
-        self.slider_zoom = QSlider(Qt.Orientation.Horizontal)
-        self.slider_zoom.setRange(1, 8)
-        self.slider_zoom.setValue(2)
-        self.slider_zoom.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.slider_zoom.setTickInterval(1)
-        self.slider_zoom.valueChanged.connect(self.on_zoom_change)
-        zoom_layout.addWidget(self.slider_zoom)
-        self.lbl_zoom_val = QLabel("2x")
-        zoom_layout.addWidget(self.lbl_zoom_val)
-        
-        view_layout.addLayout(zoom_layout)
         control_layout.addWidget(view_box)
         
         control_layout.addStretch()
@@ -131,19 +134,16 @@ class MainWindow(QMainWindow):
 
         # --- Right Panel (Preview) ---
         self.preview = AnimationPreview(self.npc_data)
-        self.preview.zoomChanged.connect(self.update_zoom_slider_from_scroll)
         self.preview.dataChanged.connect(self.sync_spinboxes_from_visual_edit)
         layout.addWidget(self.preview)
 
         # --- FLOATING HUD BUTTON ---
-        # Parented to self.preview so it sits inside the canvas
         self.btn_hitbox_mode = QPushButton("Hitbox Adjustment Mode", self.preview)
         self.btn_hitbox_mode.setCheckable(True)
-        self.btn_hitbox_mode.move(10, 10) # Position: Top Left
+        self.btn_hitbox_mode.move(10, 10)
         self.btn_hitbox_mode.resize(180, 30)
         self.btn_hitbox_mode.setCursor(Qt.CursorShape.PointingHandCursor)
         
-        # Styling for a "Game Tool" feel
         self.btn_hitbox_mode.setStyleSheet("""
             QPushButton {
                 background-color: rgba(50, 50, 50, 200);
@@ -204,6 +204,8 @@ class MainWindow(QMainWindow):
         self.inputs['gfxheight'].setValue(p['gfxheight'])
         self.inputs['width'].setValue(p['width'])
         self.inputs['height'].setValue(p['height'])
+        self.inputs['gfxoffsetx'].setValue(p['gfxoffsetx'])
+        self.inputs['gfxoffsety'].setValue(p['gfxoffsety'])
         self.block_signals_all(False)
 
     def update_data_from_ui(self):
@@ -234,17 +236,6 @@ class MainWindow(QMainWindow):
     def on_direction_change(self):
         self.preview.show_direction = 1 if self.rb_right.isChecked() else 0
         self.preview.update()
-        
-    def on_zoom_change(self):
-        val = self.slider_zoom.value()
-        self.lbl_zoom_val.setText(f"{val}x")
-        self.preview.set_zoom(val)
-
-    def update_zoom_slider_from_scroll(self, new_zoom):
-        self.slider_zoom.blockSignals(True)
-        self.slider_zoom.setValue(new_zoom)
-        self.lbl_zoom_val.setText(f"{new_zoom}x")
-        self.slider_zoom.blockSignals(False)
 
     def block_signals_all(self, b):
         for w in self.inputs.values():
