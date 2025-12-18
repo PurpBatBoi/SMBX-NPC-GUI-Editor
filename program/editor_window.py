@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
         # Undo/Redo Stack
         self.undo_stack = QUndoStack(self)
         self.undo_stack.setUndoLimit(50)  # Keep last 50 actions
-        
+        self.setAcceptDrops(True)
         self.npc_data = NPCData()
         self.ui_sections = {}
         self.all_widgets = {}
@@ -396,18 +396,10 @@ class MainWindow(QMainWindow):
                 self._add_param_widget(section, key, definition)
 
     def load_file(self):
+        """Standard File -> Open dialog"""
         fname, _ = QFileDialog.getOpenFileName(self, "Open NPC Txt", "", "Text Files (*.txt)")
         if fname:
-            self.is_loading = True
-            if self.npc_data.load(fname):
-                self.update_ui_from_data()
-                self.preview.load_image()
-                self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
-                self._update_file_watcher()
-                # Clear undo stack when loading new file
-                self.undo_stack.clear()
-                self.status_bar.showMessage(f"Loaded: {os.path.basename(fname)}", 5000)
-            self.is_loading = False
+            self._process_load_path(fname)
 
     def save_file(self):
         # 1. Handle "Save As" if no file is currently loaded
@@ -774,3 +766,43 @@ class MainWindow(QMainWindow):
             self.undo_stack.push(cmd)
         
         self._drag_snapshot = {}
+
+    def dragEnterEvent(self, event):
+        """Verifies if the dragged object contains a local .txt file"""
+        if event.mimeData().hasUrls():
+            # Check the first URL (most common use case)
+            url = event.mimeData().urls()[0]
+            if url.isLocalFile() and url.toLocalFile().lower().endswith(".txt"):
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dropEvent(self, event):
+        """Handles the file drop"""
+        for url in event.mimeData().urls():
+            file_path = url.toLocalFile()
+            if os.path.isfile(file_path) and file_path.lower().endswith(".txt"):
+                self._process_load_path(file_path)
+                break # Only load the first valid NPC file dropped
+    
+    def _process_load_path(self, fname):
+        self.is_loading = True
+        if self.npc_data.load(fname):
+            # --- Optional: Reset UI state for a fresh feel ---
+            # 1. Reset scroll position
+            # (Assuming 'scroll' was stored as self.scroll_area)
+            # self.scroll_area.verticalScrollBar().setValue(0) 
+            
+            # 2. Update data
+            self.update_ui_from_data()
+            self.preview.load_image()
+            self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
+            self._update_file_watcher()
+            self.undo_stack.clear()
+            
+            # 3. Focus on the first section
+            if "Animation" in self.ui_sections:
+                self.ui_sections["Animation"].expand()
+                
+            self.status_bar.showMessage(f"Loaded: {os.path.basename(fname)}", 5000)
+        self.is_loading = False
