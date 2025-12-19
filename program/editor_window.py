@@ -270,8 +270,6 @@ class MainWindow(QMainWindow):
         if self.undo_stack.canUndo():
             self.status_bar.showMessage(f"Action: {self.undo_stack.undoText()}", 3000)
 
-
-
     def load_file(self):
         self.file_controller.load_dialog()
 
@@ -455,8 +453,6 @@ class MainWindow(QMainWindow):
                 widget.blockSignals(True)
                 widget.setValue(val)
                 widget.blockSignals(False)
-
-
 
     def on_custom_table_change(self):
         self.npc_data.custom_params = {}
