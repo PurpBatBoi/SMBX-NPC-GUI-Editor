@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QRadioButton, QFileDialog, QFrame, QPushButton, 
                              QFormLayout, QSizePolicy, QToolButton, QScrollArea,
                              QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-                             QButtonGroup, QSplitter, QStatusBar)
+                             QButtonGroup, QSplitter, QSplitterHandle, QStatusBar)
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QFileSystemWatcher
 from PyQt6.QtGui import QUndoStack, QAction, QKeySequence
 from .npc_data import NPCData
@@ -119,6 +119,20 @@ class CollapsibleBox(QWidget):
     def add_row(self, label, widget):
         self.content_layout.addRow(label, widget)
 
+
+class _FixedHandle(QSplitterHandle):
+    def mousePressEvent(self, event):
+        event.ignore()
+    def mouseMoveEvent(self, event):
+        event.ignore()
+    def mouseReleaseEvent(self, event):
+        event.ignore()
+
+
+class NoResizeSplitter(QSplitter):
+    def createHandle(self):
+        return _FixedHandle(self.orientation(), self)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -188,7 +202,7 @@ class MainWindow(QMainWindow):
         self.form_layout.addStretch(1)
         self.scroll_area.setWidget(scroll_content)
         
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter = NoResizeSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.scroll_area)
         main_layout.addWidget(splitter, 1)
 
