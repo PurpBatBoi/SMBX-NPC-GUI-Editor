@@ -151,6 +151,13 @@ class AnimationPreview(QWidget):
             y = (ph / 2) - fh + oy 
             return QRectF(x, y, fw, fh)
 
+    def get_view_limits(self):
+        rect = self.get_active_rect()
+        margin = 100
+        if not rect: return -margin, margin, -margin, margin
+        return (rect.left() - margin, rect.right() + margin, 
+                rect.top() - margin, rect.bottom() + margin)
+
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
         new_zoom = self.zoom + (1 if delta > 0 else -1)
@@ -183,8 +190,25 @@ class AnimationPreview(QWidget):
     def mouseMoveEvent(self, event):
         if self.is_panning:
             delta = event.pos() - self.last_mouse_pos
-            self.pan_x += delta.x()
-            self.pan_y += delta.y()
+            
+            new_px = self.pan_x + delta.x()
+            new_py = self.pan_y + delta.y()
+
+            # Logical limits
+            l, r, t, b = self.get_view_limits()
+            
+            # Convert logical limits to pan limits (screen pixels)
+            # Center (logical) = -pan / zoom
+            # l <= -pan/zoom <= r  =>  -r*zoom <= pan <= -l*zoom
+            
+            min_px = -r * self.zoom
+            max_px = -l * self.zoom
+            min_py = -b * self.zoom
+            max_py = -t * self.zoom
+            
+            self.pan_x = max(min_px, min(max_px, new_px))
+            self.pan_y = max(min_py, min(max_py, new_py))
+
             self.last_mouse_pos = event.pos()
             self.update()
             return
@@ -278,17 +302,27 @@ class AnimationPreview(QWidget):
         view_r = (self.width() - cx - self.pan_x) * inv_zoom
         view_t = (-cy - self.pan_y) * inv_zoom
         view_b = (self.height() - cy - self.pan_y) * inv_zoom
-        grid_size = 32
-        start_x = int(view_l // grid_size) * grid_size
-        end_x = int(view_r // grid_size + 1) * grid_size
-        start_y = int(view_t // grid_size) * grid_size
-        end_y = int(view_b // grid_size + 1) * grid_size
+        
+        limit_l, limit_r, limit_t, limit_b = self.get_view_limits()
+        
+        draw_l = max(view_l, limit_l)
+        draw_r = min(view_r, limit_r)
+        draw_t = max(view_t, limit_t)
+        draw_b = min(view_b, limit_b)
+
+        grid_size = 16
+        start_x = int(draw_l // grid_size) * grid_size
+        end_x = int(draw_r // grid_size + 1) * grid_size
+        start_y = int(draw_t // grid_size) * grid_size
+        end_y = int(draw_b // grid_size + 1) * grid_size
 
         painter.setPen(QPen(self.grid_color, 0))
         for x in range(start_x, end_x + 1, grid_size):
-            painter.drawLine(x, int(view_t), x, int(view_b))
+            if x >= draw_l and x <= draw_r:
+                painter.drawLine(x, int(draw_t), x, int(draw_b))
         for y in range(start_y, end_y + 1, grid_size):
-            painter.drawLine(int(view_l), y, int(view_r), y)
+            if y >= draw_t and y <= draw_b:
+                painter.drawLine(int(draw_l), y, int(draw_r), y)
 
         # Origin Crosshair (Subtle Grey)
         painter.setPen(QPen(AppColors.GRID_CENTER, 0))
