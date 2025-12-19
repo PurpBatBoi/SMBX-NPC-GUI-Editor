@@ -19,7 +19,9 @@ class AnimationPreview(QWidget):
         self.timer = QTimer()
         self.timer.timeout.connect(self.next_frame)
         self.show_direction = 0 # 0=Left, 1=Right
-        self.zoom = 2
+        self.zoom = 6  # CHANGE: Start at 6x
+
+        self.is_paused = False # NEW: Track manual pause state
         
         self.pan_x = 0
         self.pan_y = 0
@@ -139,15 +141,44 @@ class AnimationPreview(QWidget):
         return QPixmap.fromImage(front)
 
     def update_timer(self):
-        speed = self.data.standard_params.get('framespeed') or 8
+        """Starts/Stops the timer based on frame count and pause state"""
+        p = self.data.standard_params
+        frames = int(p.get('frames') or 1)
+        
+        # Logic: Stop timer if only 1 frame OR if manually paused
+        if frames <= 1 or self.is_paused:
+            self.timer.stop()
+            if frames <= 1: self.current_frame = 0
+            self.update()
+            return
+
+        speed = p.get('framespeed') or 8
         if speed < 1: speed = 1
         ms = int(speed * (1000 / 65))
         self.timer.start(ms)
 
+    def toggle_pause(self, paused):
+        """External hook to pause/play animation"""
+        self.is_paused = paused
+        self.update_timer()
+    
+    def manual_step_frame(self):
+        """Manually advance to the next frame (for step-through button)"""
+        total_frames = int(self.data.standard_params.get('frames') or 1)
+        if total_frames <= 1:
+            self.current_frame = 0
+        else:
+            self.current_frame = (self.current_frame + 1) % total_frames
+        self.update()
+
     def next_frame(self):
-        total_frames = self.data.standard_params.get('frames') or 1
-        if total_frames < 1: total_frames = 1
-        self.current_frame = (self.current_frame + 1) % total_frames
+        """Automatically advance frame (called by timer)"""
+        total_frames = int(self.data.standard_params.get('frames') or 1)
+        if total_frames <= 1:
+            self.current_frame = 0
+            self.timer.stop()
+        else:
+            self.current_frame = (self.current_frame + 1) % total_frames
         self.update()
 
     def get_logical_pos(self, screen_pos):

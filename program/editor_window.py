@@ -124,30 +124,29 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("SMBX Visual NPC Editor")
         self.resize(1100, 800)
+        self.showMaximized() # Start maximized
         
         # Undo/Redo Stack
         self.undo_stack = QUndoStack(self)
-        self.undo_stack.setUndoLimit(50)  # Keep last 50 actions
+        self.undo_stack.setUndoLimit(50)
         self.setAcceptDrops(True)
+
         self.npc_data = NPCData()
         self.ui_sections = {}
         self.all_widgets = {}
         self.param_checkboxes = {}
         self.category_keys = {}
-        # New variable to store values before a visual drag
         self._drag_snapshot = {}
 
         self.is_saving = False
         self.watched_files = []
-        self.is_loading = False  # Flag to prevent undo during load
+        self.is_loading = False
         
         self.watcher = QFileSystemWatcher(self)
         self.watcher.fileChanged.connect(self.on_external_file_change)
         
-        # Setup Menu Bar with Undo/Redo
         self.setup_menu_bar()
         
-        # Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
@@ -158,9 +157,9 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
 
         # Left Panel
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setMinimumWidth(450)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setMinimumWidth(450)
         scroll_content = QWidget()
         self.form_layout = QVBoxLayout(scroll_content)
 
@@ -168,7 +167,6 @@ class MainWindow(QMainWindow):
 
         # Custom Props
         self.custom_box = CollapsibleBox("Custom / Extra Properties")
-        
         self.custom_table = QTableWidget()
         self.custom_table.setColumnCount(2)
         self.custom_table.setHorizontalHeaderLabels(["Key", "Value"])
@@ -188,10 +186,10 @@ class MainWindow(QMainWindow):
         self.custom_box.content_layout.addRow(self.custom_table)
         self.form_layout.addWidget(self.custom_box)
         self.form_layout.addStretch(1)
-        scroll.setWidget(scroll_content)
+        self.scroll_area.setWidget(scroll_content)
         
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(scroll)
+        splitter.addWidget(self.scroll_area)
         main_layout.addWidget(splitter, 1)
 
         # Right Panel
@@ -212,32 +210,142 @@ class MainWindow(QMainWindow):
         r_layout.addLayout(view_ctrl)
 
         self.preview = AnimationPreview(self.npc_data)
-        # 1. dataChanged now only synchronizes the SpinBoxes/UI for visual feedback
         self.preview.dataChanged.connect(self.sync_ui_from_visual)
-        
-        # 2. dragStarted captures the "Before" state
         self.preview.dragStarted.connect(self.on_visual_drag_start)
-        
-        # 3. dragFinished creates the single Undo command
         self.preview.dragFinished.connect(self.on_visual_drag_complete)
+        
         r_layout.addWidget(self.preview)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
 
+        # Overlay Buttons (Children of Preview)
         self.btn_hitbox_mode = QPushButton("Hitbox Adjustment Mode", self.preview)
         self.btn_hitbox_mode.setCheckable(True)
-        self.btn_hitbox_mode.move(10, 10)
         self.btn_hitbox_mode.resize(180, 30)
         self.btn_hitbox_mode.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_hitbox_mode.setStyleSheet("QPushButton { background-color: rgba(50,50,50,200); color: white; border: 1px solid #555; } QPushButton:checked { background-color: #2e7d32; }")
+        self.btn_hitbox_mode.setStyleSheet("""
+            QPushButton { background-color: rgba(50,50,50,200); color: white; border: 1px solid #555; } 
+            QPushButton:checked { background-color: #2e7d32; }
+        """)
         self.btn_hitbox_mode.toggled.connect(self.on_mode_toggle)
 
-    def setup_menu_bar(self):
-        """Setup menu bar with undo/redo actions"""
-        menubar = self.menuBar()
+        # Animation control buttons - Step Through and Play/Pause
+        self.btn_step_frame = QPushButton("⏩", self.preview)  # Fast-forward symbol
+        self.btn_step_frame.setFixedSize(40, 30)
+        self.btn_step_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_step_frame.setStyleSheet("""
+            QPushButton { 
+                background-color: #1976d2; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { 
+                background-color: #1565c0; 
+            }
+            QPushButton:pressed {
+                background-color: #0d47a1;
+            }
+        """)
+        self.btn_step_frame.setToolTip("Step to next frame")
+        self.btn_step_frame.clicked.connect(self.on_step_frame)
+
+        self.btn_play_pause = QPushButton("⏸", self.preview)  # Pause symbol
+        self.btn_play_pause.setCheckable(True)
+        self.btn_play_pause.setFixedSize(40, 30)
+        self.btn_play_pause.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_play_pause.setStyleSheet("""
+            QPushButton { 
+                background-color: #e53935; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 16px;
+                border-radius: 4px;
+            }
+            QPushButton:checked { 
+                background-color: #43a047; 
+            }
+            QPushButton:hover { 
+                background-color: #c62828; 
+            }
+            QPushButton:checked:hover { 
+                background-color: #388e3c; 
+            }
+        """)
+        self.btn_play_pause.setToolTip("Pause/Resume animation")
+        self.btn_play_pause.toggled.connect(self.on_pause_toggled)
+
+        # Store reference to right panel for proper button positioning
+        self.right_panel = right_panel
+
+        # Initial positioning
+        self.reposition_overlay_buttons()
+
+    def reposition_overlay_buttons(self):
+        """Anchor overlay buttons to preview corners and align animation buttons properly"""
+        if hasattr(self, 'btn_hitbox_mode'):
+            self.btn_hitbox_mode.move(10, 10)
         
-        # File Menu
+        if hasattr(self, 'btn_play_pause') and hasattr(self, 'btn_step_frame'):
+            # Get preview widget dimensions
+            preview_width = self.preview.width()
+            preview_height = self.preview.height()
+            
+            # Button dimensions
+            button_height = self.btn_play_pause.height()
+            button_width = self.btn_play_pause.width()
+            
+            # Padding and gap constants
+            right_pad = 10  # Distance from right edge
+            button_gap = 5   # Gap between buttons
+            
+            # The mode label is drawn at (10, height - 10) in the preview's paintEvent
+            # Text baseline is at height - 10, so we position buttons to align with this
+            # Button bottom edge should be at the same Y as text baseline
+            label_baseline_y = preview_height - 10
+            
+            # Calculate button Y position so its bottom aligns with label baseline
+            # We want: button_top + button_height = label_baseline_y
+            y_pos = label_baseline_y - button_height
+            
+            # Calculate horizontal positions from right edge
+            # Pause button is rightmost
+            pause_x = preview_width - button_width - right_pad
+            
+            # Step button is to the left with a small gap
+            step_x = pause_x - button_width - button_gap
+            
+            # Ensure buttons don't go off-screen (safety check)
+            if step_x < 10:
+                step_x = 10
+                pause_x = step_x + button_width + button_gap
+            
+            self.btn_step_frame.move(step_x, y_pos)
+            self.btn_play_pause.move(pause_x, y_pos)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.reposition_overlay_buttons()
+
+    def on_pause_toggled(self, paused):
+        """Handle pause/resume toggle - only affects preview, not saved data"""
+        self.preview.toggle_pause(paused)
+        # Update button symbol and tooltip
+        if paused:
+            self.btn_play_pause.setText("▶")  # Play symbol
+            self.btn_play_pause.setToolTip("Resume animation")
+        else:
+            self.btn_play_pause.setText("⏸")  # Pause symbol
+            self.btn_play_pause.setToolTip("Pause animation")
+    
+    def on_step_frame(self):
+        """Manually advance to next frame - preview only, not saved"""
+        self.preview.manual_step_frame()
+
+    def setup_menu_bar(self):
+        menubar = self.menuBar()
         file_menu = menubar.addMenu("&File")
         
         action_load = QAction("&Open...", self)
@@ -251,30 +359,22 @@ class MainWindow(QMainWindow):
         file_menu.addAction(action_save)
         
         file_menu.addSeparator()
-        
         action_exit = QAction("E&xit", self)
         action_exit.setShortcut(QKeySequence.StandardKey.Quit)
         action_exit.triggered.connect(self.close)
         file_menu.addAction(action_exit)
         
-        # Edit Menu
         edit_menu = menubar.addMenu("&Edit")
-        
-        # Undo Action
         self.action_undo = self.undo_stack.createUndoAction(self, "&Undo")
         self.action_undo.setShortcut(QKeySequence.StandardKey.Undo)
         edit_menu.addAction(self.action_undo)
         
-        # Redo Action
         self.action_redo = self.undo_stack.createRedoAction(self, "&Redo")
         self.action_redo.setShortcut(QKeySequence.StandardKey.Redo)
         edit_menu.addAction(self.action_redo)
-        
-        # Connect undo stack signals for status updates
         self.undo_stack.indexChanged.connect(self.on_undo_stack_changed)
 
     def on_undo_stack_changed(self, idx):
-        """Update status bar when undo/redo occurs"""
         if self.undo_stack.canUndo():
             self.status_bar.showMessage(f"Action: {self.undo_stack.undoText()}", 3000)
 
@@ -296,11 +396,11 @@ class MainWindow(QMainWindow):
             widget = TriStateBoolWidget()
             widget.stateChanged.connect(lambda: self.on_standard_change(key))
         elif dtype == int:
-            widget = ValidatedSpinBox()  # Use validated version
+            widget = ValidatedSpinBox()
             widget.setRange(definition.get('min', -9999), definition.get('max', 9999))
             widget.valueChanged.connect(lambda: self.on_standard_change(key))
         elif dtype == float:
-            widget = ValidatedDoubleSpinBox()  # Use validated version
+            widget = ValidatedDoubleSpinBox()
             widget.setRange(definition.get('min', -9999.0), definition.get('max', 9999.0))
             widget.setSingleStep(definition.get('step', 0.1))
             widget.valueChanged.connect(lambda: self.on_standard_change(key))
@@ -318,14 +418,11 @@ class MainWindow(QMainWindow):
             container_layout = QHBoxLayout(container)
             container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.setSpacing(5)
-            
             chk = QCheckBox()
             chk.setChecked(False)
             chk.toggled.connect(lambda checked, k=key: self.on_param_enabled(k, checked))
-            
             container_layout.addWidget(chk)
             container_layout.addWidget(widget, 1)
-            
             section.add_row(definition.get('label', key), container)
             self._register_widget(key, widget)
             self.param_checkboxes[key] = chk
@@ -335,29 +432,25 @@ class MainWindow(QMainWindow):
         lay = QHBoxLayout(container)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(5)
-        
         chk = QCheckBox()
         chk.setChecked(False)
         chk.toggled.connect(lambda checked, k=key1: self.on_param_enabled(k, checked))
         chk.toggled.connect(lambda checked, k=key2: self.on_param_enabled(k, checked))
         lay.addWidget(chk)
-
         if sublabel1: lay.addWidget(QLabel(sublabel1))
-        w1 = ValidatedSpinBox()  # Use validated version
+        w1 = ValidatedSpinBox()
         w1.setRange(def1.get('min', -9999), def1.get('max', 9999))
         w1.setToolTip(def1.get('tips', key1))
         w1.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         w1.valueChanged.connect(lambda: self.on_standard_change(key1))
         lay.addWidget(w1)
-        
         if sublabel2: lay.addWidget(QLabel(sublabel2))
-        w2 = ValidatedSpinBox()  # Use validated version
+        w2 = ValidatedSpinBox()
         w2.setRange(def2.get('min', -9999), def2.get('max', 9999))
         w2.setToolTip(def2.get('tips', key2))
         w2.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         w2.valueChanged.connect(lambda: self.on_standard_change(key2))
         lay.addWidget(w2)
-        
         section.add_row(label_row, container)
         self._register_widget(key1, w1)
         self._register_widget(key2, w2)
@@ -368,62 +461,48 @@ class MainWindow(QMainWindow):
         categories = sorted(list(set(d['category'] for d in NPC_DEFS.values())))
         priority = ["Animation", "Collision", "Interaction", "Behaviour"]
         categories.sort(key=lambda x: priority.index(x) if x in priority else 99)
-        
         pairs_config = [('gfxwidth', 'gfxheight', 'GFX Size', 'W:', 'H:'), ('width', 'height', 'Hitbox Size', 'W:', 'H:'), ('gfxoffsetx', 'gfxoffsety', 'GFX Offset', 'X:', 'Y:')]
         pair_map = {p[0]: ('primary', p) for p in pairs_config}
         pair_map.update({p[1]: ('secondary', p) for p in pairs_config})
-
         for cat in categories:
             section = CollapsibleBox(cat)
             self.form_layout.addWidget(section)
             self.ui_sections[cat] = section
             self.category_keys[cat] = []
-            
             if cat == "Animation": section.expand()
-        
         for key, definition in NPC_DEFS.items():
             cat = definition['category']
             section = self.ui_sections[cat]
             self.category_keys[cat].append(key)
-
             if key in pair_map:
                 role, data = pair_map[key]
                 if role == 'primary':
                     k1, k2, main_label, sub1, sub2 = data
                     self._add_dual_int_widget(section, main_label, k1, NPC_DEFS.get(k1), k2, NPC_DEFS.get(k2), sub1, sub2)
-                continue
             else:
                 self._add_param_widget(section, key, definition)
 
     def load_file(self):
-        """Standard File -> Open dialog"""
         fname, _ = QFileDialog.getOpenFileName(self, "Open NPC Txt", "", "Text Files (*.txt)")
-        if fname:
-            self._process_load_path(fname)
+        if fname: self._process_load_path(fname)
 
     def save_file(self):
-        # 1. Handle "Save As" if no file is currently loaded
         if not self.npc_data.filepath:
             fname, _ = QFileDialog.getSaveFileName(self, "Save NPC Config", "", "Text Files (*.txt)")
-            if not fname:
-                return # User cancelled
+            if not fname: return
             self.npc_data.filepath = fname
             self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
             self._update_file_watcher()
-
-        # 2. Save
         self.is_saving = True
         self.npc_data.save()
         self.status_bar.showMessage(f"Saved: {os.path.basename(self.npc_data.filepath)}", 3000)
         QTimer.singleShot(500, lambda: setattr(self, 'is_saving', False))
 
     def update_ui_from_data(self):
-        # 1. Update Widgets
         for key, widget in self.all_widgets.items():
             val = self.npc_data.standard_params.get(key)
             default = NPC_DEFS[key]['default']
             chk = self.param_checkboxes.get(key)
-            
             widget.blockSignals(True)
             if chk:
                 chk.blockSignals(True)
@@ -431,27 +510,22 @@ class MainWindow(QMainWindow):
                 chk.setChecked(is_active)
                 widget.setEnabled(is_active)
                 chk.blockSignals(False)
-            
             display_val = val if val is not None else default
             if isinstance(widget, TriStateBoolWidget): widget.set_state(display_val)
-            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, ValidatedSpinBox, ValidatedDoubleSpinBox)): 
-                widget.setValue(display_val)
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, ValidatedSpinBox, ValidatedDoubleSpinBox)): widget.setValue(display_val)
             elif isinstance(widget, QLineEdit): widget.setText(str(display_val))
             elif isinstance(widget, QComboBox):
                 idx = widget.findData(display_val)
                 if idx >= 0: widget.setCurrentIndex(idx)
             widget.blockSignals(False)
 
-        # 2. Update Categories (Expand active ones)
         for cat, keys in self.category_keys.items():
             section = self.ui_sections.get(cat)
             if not section: continue
-            
             has_active = any(self.npc_data.standard_params.get(k) is not None for k in keys)
             if has_active: section.expand()
             else: section.collapse()
 
-        # 3. Custom Table
         self.custom_table.blockSignals(True)
         self.custom_table.setRowCount(0)
         has_custom = False
@@ -464,164 +538,107 @@ class MainWindow(QMainWindow):
         self.custom_table.blockSignals(False)
         if has_custom: self.custom_box.expand()
         
+        # Update animation button states based on current frame count
+        self._update_animation_button_states()
+        
         self.preview.update_timer()
         self.preview.update()
 
     def on_standard_change(self, key):
-        """Handle standard parameter change with undo support"""
-        if self.is_loading:
-            return  # Don't create undo commands during file load
+        if self.is_loading: return
+        widget, chk = self.all_widgets.get(key), self.param_checkboxes.get(key)
+        if not widget or not chk or not chk.isChecked(): return
+        new_value, old_value = self._get_widget_value(widget), self.npc_data.standard_params.get(key)
+        if new_value == old_value: return
+        self.undo_stack.push(ChangeParameterCommand(self.npc_data, key, old_value, new_value, ui_callback=self.update_single_widget))
         
-        widget = self.all_widgets.get(key)
-        chk = self.param_checkboxes.get(key)
-        if not widget or not chk:
-            return
-        
-        if not chk.isChecked():
-            return  # Parameter is disabled
-        
-        new_value = self._get_widget_value(widget)
-        old_value = self.npc_data.standard_params.get(key)
-        
-        # Don't create command if value unchanged
-        if new_value == old_value:
-            return
-        
-        # Create undo command
-        cmd = ChangeParameterCommand(
-            self.npc_data,
-            key,
-            old_value,
-            new_value,
-            ui_callback=self.update_single_widget
-        )
-        self.undo_stack.push(cmd)
+        # Update animation button states if frames changed
+        if key == 'frames':
+            self._update_animation_button_states()
         
         self.preview.update_timer()
         self.preview.update()
+    
+    def _update_animation_button_states(self):
+        """Enable/disable animation control buttons based on frame count"""
+        # Get current frames from data (this reflects real-time changes)
+        frames = int(self.npc_data.standard_params.get('frames') or 1)
+        
+        if frames <= 1:
+            self.btn_play_pause.setEnabled(False)
+            self.btn_step_frame.setEnabled(False)
+            self.btn_play_pause.setToolTip("No animation frames to play (frames = 1)")
+            self.btn_step_frame.setToolTip("No animation frames to step through")
+        else:
+            self.btn_play_pause.setEnabled(True)
+            self.btn_step_frame.setEnabled(True)
+            paused = self.btn_play_pause.isChecked()
+            if paused:
+                self.btn_play_pause.setToolTip("Resume animation")
+            else:
+                self.btn_play_pause.setToolTip("Pause animation")
+            self.btn_step_frame.setToolTip("Step to next frame")
 
     def on_param_enabled(self, key, checked):
-        """Handle parameter enable/disable with undo support"""
         if self.is_loading:
-            widget = self.all_widgets.get(key)
-            if widget:
-                widget.setEnabled(checked)
+            w = self.all_widgets.get(key)
+            if w: w.setEnabled(checked)
             return
-        
         widget = self.all_widgets.get(key)
-        if not widget:
-            return
-        
+        if not widget: return
         old_enabled = self.npc_data.standard_params.get(key) is not None
         value = self._get_widget_value(widget) if checked else None
-        
-        # Create undo command
-        cmd = ToggleParameterCommand(
-            self.npc_data,
-            key,
-            old_enabled,
-            checked,
-            value,
-            ui_callback=self.update_single_checkbox
-        )
-        self.undo_stack.push(cmd)
-        
+        self.undo_stack.push(ToggleParameterCommand(self.npc_data, key, old_enabled, checked, value, ui_callback=self.update_single_checkbox))
         self.preview.update_timer()
         self.preview.update()
 
     def update_single_widget(self, key, value):
-        """Update a single widget from undo/redo"""
         widget = self.all_widgets.get(key)
-        if not widget:
-            return
-        
+        if not widget: return
         widget.blockSignals(True)
-        
-        if value is None:
-            # Use default
-            default = NPC_DEFS[key]['default']
-            if isinstance(widget, TriStateBoolWidget):
-                widget.set_state(default)
-            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, ValidatedSpinBox, ValidatedDoubleSpinBox)):
-                widget.setValue(default)
-            elif isinstance(widget, QLineEdit):
-                widget.setText(str(default))
-        else:
-            if isinstance(widget, TriStateBoolWidget):
-                widget.set_state(value)
-            elif isinstance(widget, (QSpinBox, QDoubleSpinBox, ValidatedSpinBox, ValidatedDoubleSpinBox)):
-                widget.setValue(value)
-            elif isinstance(widget, QLineEdit):
-                widget.setText(str(value))
-            elif isinstance(widget, QComboBox):
-                idx = widget.findData(value)
-                if idx >= 0:
-                    widget.setCurrentIndex(idx)
-        
+        display = value if value is not None else NPC_DEFS[key]['default']
+        if isinstance(widget, TriStateBoolWidget): widget.set_state(display)
+        elif isinstance(widget, (QSpinBox, QDoubleSpinBox, ValidatedSpinBox, ValidatedDoubleSpinBox)): widget.setValue(display)
+        elif isinstance(widget, QLineEdit): widget.setText(str(display))
+        elif isinstance(widget, QComboBox):
+            idx = widget.findData(display)
+            if idx >= 0: widget.setCurrentIndex(idx)
         widget.blockSignals(False)
         self.preview.update_timer()
         self.preview.update()
 
     def update_single_checkbox(self, key, enabled):
-        """Update checkbox state from undo/redo"""
-        chk = self.param_checkboxes.get(key)
-        widget = self.all_widgets.get(key)
-        
+        chk, widget = self.param_checkboxes.get(key), self.all_widgets.get(key)
         if chk:
             chk.blockSignals(True)
             chk.setChecked(enabled)
             chk.blockSignals(False)
-        
-        if widget:
-            widget.setEnabled(enabled)
+        if widget: widget.setEnabled(enabled)
 
-    def on_visual_drag_finished(self):
-        """Handle visual drag completion with undo support"""
-        if self.is_loading:
-            return
-        
-        # Collect all changed keys
+    def on_visual_drag_start(self):
+        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
+        self._drag_snapshot = {k: self.npc_data.standard_params.get(k) for k in keys}
+    
+    def on_visual_drag_complete(self):
+        if self.is_loading: return
+        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
         changes = {}
-        keys_to_check = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
-        
-        for key in keys_to_check:
-            widget = self.all_widgets.get(key)
-            if not widget:
-                continue
-            
-            new_val = self.npc_data.standard_params.get(key)
-            
-            # Get the old value from widget (it hasn't been updated yet)
-            widget.blockSignals(True)
-            old_val = widget.value()
-            widget.blockSignals(False)
-            
-            if new_val != old_val:
+        for key in keys:
+            old_val, new_val = self._drag_snapshot.get(key), self.npc_data.standard_params.get(key)
+            if old_val != new_val:
                 changes[key] = (old_val, new_val)
-                
-                # Enable checkbox if needed
                 chk = self.param_checkboxes.get(key)
                 if chk and not chk.isChecked():
                     chk.blockSignals(True)
                     chk.setChecked(True)
+                    self.all_widgets[key].setEnabled(True)
                     chk.blockSignals(False)
-        
         if changes:
-            cmd = ChangeMultipleParametersCommand(
-                self.npc_data,
-                changes,
-                ui_callback=self.update_single_widget,
-                description="Visual edit"
-            )
-            self.undo_stack.push(cmd)
-        
-        # Update widgets to show new values
-        self.sync_ui_from_visual()
+            self.undo_stack.push(ChangeMultipleParametersCommand(self.npc_data, changes, ui_callback=self.update_single_widget, description="Visual Edit"))
+        self._drag_snapshot = {}
 
     def sync_ui_from_visual(self):
-        """Real-time UI update during drag (No Undo commands here)"""
-        p = self.npc_data.standard_params
-        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
+        p, keys = self.npc_data.standard_params, ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
         for key in keys:
             widget = self.all_widgets.get(key)
             val = p.get(key)
@@ -633,85 +650,42 @@ class MainWindow(QMainWindow):
     def _update_file_watcher(self):
         if self.watched_files: self.watcher.removePaths(self.watched_files)
         self.watched_files = []
-        if self.npc_data.filepath and os.path.exists(self.npc_data.filepath):
-            self.watched_files.append(self.npc_data.filepath)
-        if self.preview.image_path and os.path.exists(self.preview.image_path):
-            self.watched_files.append(self.preview.image_path)
+        if self.npc_data.filepath and os.path.exists(self.npc_data.filepath): self.watched_files.append(self.npc_data.filepath)
+        if self.preview.image_path and os.path.exists(self.preview.image_path): self.watched_files.append(self.preview.image_path)
+        if hasattr(self.preview, 'mask_path') and self.preview.mask_path and os.path.exists(self.preview.mask_path): self.watched_files.append(self.preview.mask_path)
         if self.watched_files: self.watcher.addPaths(self.watched_files)
 
     def on_external_file_change(self, path):
         if self.is_saving: return
-        
-        # Handle Atomic Saves (File deleted then recreated)
         if not os.path.exists(path):
             QTimer.singleShot(100, lambda: self._update_file_watcher())
             return
-            
         if path == self.npc_data.filepath:
-            print(f"External reload: {path}")
             self.is_loading = True
-            if self.npc_data.load(path):
-                self.update_ui_from_data()
+            if self.npc_data.load(path): self.update_ui_from_data()
             self.is_loading = False
-            self.status_bar.showMessage("File reloaded (external change)", 3000)
-        elif path == self.preview.image_path:
+        elif path == self.preview.image_path or (hasattr(self.preview, 'mask_path') and path == self.preview.mask_path):
             self.preview.load_image()
-            self.status_bar.showMessage("Image reloaded", 2000)
-            
-        # Re-add to watcher
-        if path in self.watched_files:
-            self.watcher.removePath(path)
-            self.watcher.addPath(path)
+            self.status_bar.showMessage("Graphics reloaded", 2000)
 
     def on_custom_table_change(self):
-        """Handle custom table edits (currently without undo - TODO)"""
         self.npc_data.custom_params = {}
         for r in range(self.custom_table.rowCount()):
-            k_item = self.custom_table.item(r, 0)
-            v_item = self.custom_table.item(r, 1)
-            if k_item and v_item and k_item.text().strip():
-                self.npc_data.set_custom(k_item.text().strip(), v_item.text().strip())
+            k_item, v_item = self.custom_table.item(r, 0), self.custom_table.item(r, 1)
+            if k_item and v_item and k_item.text().strip(): self.npc_data.set_custom(k_item.text().strip(), v_item.text().strip())
     
     def add_custom_row(self):
-        """Add custom parameter with undo support"""
-        if self.is_loading:
-            return
-        
-        key = f"new_param_{self.custom_table.rowCount()}"
-        value = "0"
-        
-        cmd = AddCustomParameterCommand(
-            self.npc_data,
-            key,
-            value,
-            ui_callback=self.refresh_custom_table
-        )
-        self.undo_stack.push(cmd)
+        if self.is_loading: return
+        self.undo_stack.push(AddCustomParameterCommand(self.npc_data, f"new_param_{self.custom_table.rowCount()}", "0", ui_callback=self.refresh_custom_table))
     
     def remove_custom_row(self):
-        """Remove custom parameter with undo support"""
-        if self.is_loading:
-            return
-        
+        if self.is_loading: return
         cur = self.custom_table.currentRow()
         if cur >= 0:
-            k_item = self.custom_table.item(cur, 0)
-            v_item = self.custom_table.item(cur, 1)
-            
-            if k_item:
-                key = k_item.text().strip()
-                old_value = v_item.text().strip() if v_item else ""
-                
-                cmd = RemoveCustomParameterCommand(
-                    self.npc_data,
-                    key,
-                    old_value,
-                    ui_callback=self.refresh_custom_table
-                )
-                self.undo_stack.push(cmd)
+            k_item, v_item = self.custom_table.item(cur, 0), self.custom_table.item(cur, 1)
+            if k_item: self.undo_stack.push(RemoveCustomParameterCommand(self.npc_data, k_item.text().strip(), v_item.text().strip() if v_item else "", ui_callback=self.refresh_custom_table))
     
     def refresh_custom_table(self):
-        """Refresh custom table display"""
         self.custom_table.blockSignals(True)
         self.custom_table.setRowCount(0)
         for k, v in self.npc_data.custom_params.items():
@@ -728,49 +702,9 @@ class MainWindow(QMainWindow):
     def on_direction_change(self):
         self.preview.show_direction = 1 if self.rb_right.isChecked() else 0
         self.preview.update()
-    
-    def on_visual_drag_start(self):
-        """Capture values before the user starts moving the mouse"""
-        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
-        self._drag_snapshot = {k: self.npc_data.standard_params.get(k) for k in keys}
-    
-    def on_visual_drag_complete(self):
-        """Compare current values to snapshot and push one Undo command"""
-        if self.is_loading: return
-        
-        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
-        changes = {}
-        
-        for key in keys:
-            old_val = self._drag_snapshot.get(key)
-            new_val = self.npc_data.standard_params.get(key)
-            
-            if old_val != new_val:
-                changes[key] = (old_val, new_val)
-                
-                # Ensure the checkbox for this parameter is enabled
-                chk = self.param_checkboxes.get(key)
-                if chk and not chk.isChecked():
-                    chk.blockSignals(True)
-                    chk.setChecked(True)
-                    self.all_widgets[key].setEnabled(True)
-                    chk.blockSignals(False)
-        
-        if changes:
-            cmd = ChangeMultipleParametersCommand(
-                self.npc_data,
-                changes,
-                ui_callback=self.update_single_widget,
-                description="Visual Edit"
-            )
-            self.undo_stack.push(cmd)
-        
-        self._drag_snapshot = {}
 
     def dragEnterEvent(self, event):
-        """Verifies if the dragged object contains a local .txt file"""
         if event.mimeData().hasUrls():
-            # Check the first URL (most common use case)
             url = event.mimeData().urls()[0]
             if url.isLocalFile() and url.toLocalFile().lower().endswith(".txt"):
                 event.acceptProposedAction()
@@ -778,31 +712,21 @@ class MainWindow(QMainWindow):
         event.ignore()
 
     def dropEvent(self, event):
-        """Handles the file drop"""
         for url in event.mimeData().urls():
             file_path = url.toLocalFile()
             if os.path.isfile(file_path) and file_path.lower().endswith(".txt"):
                 self._process_load_path(file_path)
-                break # Only load the first valid NPC file dropped
+                break
     
     def _process_load_path(self, fname):
         self.is_loading = True
         if self.npc_data.load(fname):
-            # --- Optional: Reset UI state for a fresh feel ---
-            # 1. Reset scroll position
-            # (Assuming 'scroll' was stored as self.scroll_area)
-            # self.scroll_area.verticalScrollBar().setValue(0) 
-            
-            # 2. Update data
+            self.scroll_area.verticalScrollBar().setValue(0)
             self.update_ui_from_data()
             self.preview.load_image()
             self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
             self._update_file_watcher()
             self.undo_stack.clear()
-            
-            # 3. Focus on the first section
-            if "Animation" in self.ui_sections:
-                self.ui_sections["Animation"].expand()
-                
+            if "Animation" in self.ui_sections: self.ui_sections["Animation"].expand()
             self.status_bar.showMessage(f"Loaded: {os.path.basename(fname)}", 5000)
         self.is_loading = False

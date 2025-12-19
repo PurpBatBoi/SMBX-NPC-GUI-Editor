@@ -1,19 +1,16 @@
-width = 32
-height = 32
+frames = 2
+framespeed = 8
+framestyle = 1
 gfxwidth = 32
 gfxheight = 64
 gfxoffsetx = 0
 gfxoffsety = 2
-frames = 2
-framestyle = 1
-framespeed = 8
+
+width = 32
+height = 32
 
 speed = 1.2
 cliffturn = true
 
-shellid = 7
-terminalvelocity = 8.0
-score = 1
-health = 1
-weight = 0.0
-durability = 0
+shellID = 7
+
