@@ -15,6 +15,9 @@ from .undo_commands import (ChangeParameterCommand, ChangeMultipleParametersComm
                             RemoveCustomParameterCommand, ChangeCustomParameterCommand)
 from .validated_widgets import ValidatedSpinBox, ValidatedDoubleSpinBox
 from .ui.widgets import TriStateBoolWidget, CollapsibleBox, NoResizeSplitter, get_widget_value
+from .ui.form_builder import FormBuilder
+from .ui.styles import AppStyles
+from .controllers.file_controller import FileController
 
 
 
@@ -37,12 +40,14 @@ class MainWindow(QMainWindow):
         self.category_keys = {}
         self._drag_snapshot = {}
 
-        self.is_saving = False
-        self.watched_files = []
+
         self.is_loading = False
         
-        self.watcher = QFileSystemWatcher(self)
-        self.watcher.fileChanged.connect(self.on_external_file_change)
+        # Controllers
+        self.file_controller = FileController(self, self.npc_data)
+        self.file_controller.fileLoaded.connect(self.on_file_loaded)
+        self.file_controller.fileSaved.connect(self.on_file_saved)
+        self.file_controller.fileExternalChange.connect(self.on_external_file_changed)
         
         self.setup_menu_bar()
         
@@ -62,7 +67,25 @@ class MainWindow(QMainWindow):
         scroll_content = QWidget()
         self.form_layout = QVBoxLayout(scroll_content)
 
-        self.generate_standard_ui()
+        # Build Standard UI
+        self.form_builder = FormBuilder(self)
+        self.ui_sections, self.category_keys, self.all_widgets, self.param_checkboxes = \
+            self.form_builder.build_standard_ui(NPC_DEFS, self.form_layout)
+        
+        # Connect signals for standard widgets
+        for key, widget in self.all_widgets.items():
+            if hasattr(widget, 'stateChanged'): # TriStateBool
+                widget.stateChanged.connect(lambda *_, k=key: self.on_standard_change(k))
+            elif hasattr(widget, 'valueChanged'): # SpinBoxes
+                widget.valueChanged.connect(lambda *_, k=key: self.on_standard_change(k))
+            elif hasattr(widget, 'textChanged'): # LineEdit
+                widget.textChanged.connect(lambda *_, k=key: self.on_standard_change(k))
+            elif hasattr(widget, 'currentIndexChanged'): # ComboBox
+                widget.currentIndexChanged.connect(lambda *_, k=key: self.on_standard_change(k))
+                
+        # Connect signals for checkboxes
+        for key, chk in self.param_checkboxes.items():
+            chk.toggled.connect(lambda checked, k=key: self.on_param_enabled(k, checked))
 
         # Custom Props
         self.custom_box = CollapsibleBox("Custom / Extra Properties")
@@ -123,31 +146,16 @@ class MainWindow(QMainWindow):
         self.btn_hitbox_mode.setCheckable(True)
         self.btn_hitbox_mode.resize(180, 30)
         self.btn_hitbox_mode.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_hitbox_mode.setStyleSheet("""
-            QPushButton { background-color: rgba(50,50,50,200); color: white; border: 1px solid #555; } 
-            QPushButton:checked { background-color: #2e7d32; }
-        """)
+        self.btn_hitbox_mode.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_hitbox_mode.setStyleSheet(AppStyles.BTN_HITBOX_MODE)
         self.btn_hitbox_mode.toggled.connect(self.on_mode_toggle)
 
         # Animation control buttons - Step Through and Play/Pause
         self.btn_step_frame = QPushButton("⏩", self.preview)  # Fast-forward symbol
         self.btn_step_frame.setFixedSize(40, 30)
         self.btn_step_frame.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_step_frame.setStyleSheet("""
-            QPushButton { 
-                background-color: #1976d2; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { 
-                background-color: #1565c0; 
-            }
-            QPushButton:pressed {
-                background-color: #0d47a1;
-            }
-        """)
+        self.btn_step_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_step_frame.setStyleSheet(AppStyles.BTN_STEP)
         self.btn_step_frame.setToolTip("Step to next frame")
         self.btn_step_frame.clicked.connect(self.on_step_frame)
 
@@ -155,24 +163,9 @@ class MainWindow(QMainWindow):
         self.btn_play_pause.setCheckable(True)
         self.btn_play_pause.setFixedSize(40, 30)
         self.btn_play_pause.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_play_pause.setStyleSheet("""
-            QPushButton { 
-                background-color: #e53935; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 16px;
-                border-radius: 4px;
-            }
-            QPushButton:checked { 
-                background-color: #43a047; 
-            }
-            QPushButton:hover { 
-                background-color: #c62828; 
-            }
-            QPushButton:checked:hover { 
-                background-color: #388e3c; 
-            }
-        """)
+        self.btn_play_pause.setFixedSize(40, 30)
+        self.btn_play_pause.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_play_pause.setStyleSheet(AppStyles.BTN_PLAY_PAUSE)
         self.btn_play_pause.setToolTip("Pause/Resume animation")
         self.btn_play_pause.toggled.connect(self.on_pause_toggled)
 
@@ -277,119 +270,42 @@ class MainWindow(QMainWindow):
         if self.undo_stack.canUndo():
             self.status_bar.showMessage(f"Action: {self.undo_stack.undoText()}", 3000)
 
-    def _register_widget(self, key, widget):
-        self.all_widgets[key] = widget
 
-
-
-    def _add_param_widget(self, section, key, definition):
-        dtype = definition.get('type')
-        widget = None
-        if dtype == bool:
-            widget = TriStateBoolWidget()
-            widget.stateChanged.connect(lambda: self.on_standard_change(key))
-        elif dtype == int:
-            widget = ValidatedSpinBox()
-            widget.setRange(definition.get('min', -9999), definition.get('max', 9999))
-            widget.valueChanged.connect(lambda: self.on_standard_change(key))
-        elif dtype == float:
-            widget = ValidatedDoubleSpinBox()
-            widget.setRange(definition.get('min', -9999.0), definition.get('max', 9999.0))
-            widget.setSingleStep(definition.get('step', 0.1))
-            widget.valueChanged.connect(lambda: self.on_standard_change(key))
-        elif dtype == str:
-            widget = QLineEdit()
-            widget.textChanged.connect(lambda: self.on_standard_change(key))
-        elif dtype == "enum":
-            widget = QComboBox()
-            for k, v in definition.get('choices', {}).items(): widget.addItem(v, k)
-            widget.currentIndexChanged.connect(lambda: self.on_standard_change(key))
-        
-        if widget:
-            widget.setToolTip(definition.get('tips', key))
-            container = QWidget()
-            container_layout = QHBoxLayout(container)
-            container_layout.setContentsMargins(0, 0, 0, 0)
-            container_layout.setSpacing(5)
-            chk = QCheckBox()
-            chk.setChecked(False)
-            chk.toggled.connect(lambda checked, k=key: self.on_param_enabled(k, checked))
-            container_layout.addWidget(chk)
-            container_layout.addWidget(widget, 1)
-            section.add_row(definition.get('label', key), container)
-            self._register_widget(key, widget)
-            self.param_checkboxes[key] = chk
-
-    def _add_dual_int_widget(self, section, label_row, key1, def1, key2, def2, sublabel1, sublabel2):
-        container = QWidget()
-        lay = QHBoxLayout(container)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(5)
-        chk = QCheckBox()
-        chk.setChecked(False)
-        chk.toggled.connect(lambda checked, k=key1: self.on_param_enabled(k, checked))
-        chk.toggled.connect(lambda checked, k=key2: self.on_param_enabled(k, checked))
-        lay.addWidget(chk)
-        if sublabel1: lay.addWidget(QLabel(sublabel1))
-        w1 = ValidatedSpinBox()
-        w1.setRange(def1.get('min', -9999), def1.get('max', 9999))
-        w1.setToolTip(def1.get('tips', key1))
-        w1.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        w1.valueChanged.connect(lambda: self.on_standard_change(key1))
-        lay.addWidget(w1)
-        if sublabel2: lay.addWidget(QLabel(sublabel2))
-        w2 = ValidatedSpinBox()
-        w2.setRange(def2.get('min', -9999), def2.get('max', 9999))
-        w2.setToolTip(def2.get('tips', key2))
-        w2.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        w2.valueChanged.connect(lambda: self.on_standard_change(key2))
-        lay.addWidget(w2)
-        section.add_row(label_row, container)
-        self._register_widget(key1, w1)
-        self._register_widget(key2, w2)
-        self.param_checkboxes[key1] = chk
-        self.param_checkboxes[key2] = chk
-
-    def generate_standard_ui(self):
-        categories = sorted(list(set(d['category'] for d in NPC_DEFS.values())))
-        priority = ["Animation", "Collision", "Interaction", "Behaviour"]
-        categories.sort(key=lambda x: priority.index(x) if x in priority else 99)
-        pairs_config = [('gfxwidth', 'gfxheight', 'GFX Size', 'W:', 'H:'), ('width', 'height', 'Hitbox Size', 'W:', 'H:'), ('gfxoffsetx', 'gfxoffsety', 'GFX Offset', 'X:', 'Y:')]
-        pair_map = {p[0]: ('primary', p) for p in pairs_config}
-        pair_map.update({p[1]: ('secondary', p) for p in pairs_config})
-        for cat in categories:
-            section = CollapsibleBox(cat)
-            self.form_layout.addWidget(section)
-            self.ui_sections[cat] = section
-            self.category_keys[cat] = []
-            if cat == "Animation": section.expand()
-        for key, definition in NPC_DEFS.items():
-            cat = definition['category']
-            section = self.ui_sections[cat]
-            self.category_keys[cat].append(key)
-            if key in pair_map:
-                role, data = pair_map[key]
-                if role == 'primary':
-                    k1, k2, main_label, sub1, sub2 = data
-                    self._add_dual_int_widget(section, main_label, k1, NPC_DEFS.get(k1), k2, NPC_DEFS.get(k2), sub1, sub2)
-            else:
-                self._add_param_widget(section, key, definition)
 
     def load_file(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Open NPC Txt", "", "Text Files (*.txt)")
-        if fname: self._process_load_path(fname)
+        self.file_controller.load_dialog()
 
     def save_file(self):
-        if not self.npc_data.filepath:
-            fname, _ = QFileDialog.getSaveFileName(self, "Save NPC Config", "", "Text Files (*.txt)")
-            if not fname: return
-            self.npc_data.filepath = fname
-            self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
-            self._update_file_watcher()
-        self.is_saving = True
-        self.npc_data.save()
-        self.status_bar.showMessage(f"Saved: {os.path.basename(self.npc_data.filepath)}", 3000)
-        QTimer.singleShot(500, lambda: setattr(self, 'is_saving', False))
+        self.file_controller.save_dialog()
+
+    def on_file_loaded(self, fname):
+        self.scroll_area.verticalScrollBar().setValue(0)
+        self.update_ui_from_data()
+        self.preview.load_image()
+        
+        # Update watcher with new image paths
+        extra = []
+        if self.preview.image_path: extra.append(self.preview.image_path)
+        if hasattr(self.preview, 'mask_path') and self.preview.mask_path: extra.append(self.preview.mask_path)
+        self.file_controller.update_watcher(extra)
+        
+        self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
+        self.undo_stack.clear()
+        if "Animation" in self.ui_sections: self.ui_sections["Animation"].expand()
+        self.status_bar.showMessage(f"Loaded: {os.path.basename(fname)}", 5000)
+
+    def on_file_saved(self, fname):
+        self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
+        self.status_bar.showMessage(f"Saved: {os.path.basename(fname)}", 3000)
+
+    def on_external_file_changed(self, path):
+        if path == self.npc_data.filepath:
+            self.is_loading = True
+            if self.npc_data.load(path): self.update_ui_from_data()
+            self.is_loading = False
+        elif path == self.preview.image_path or (hasattr(self.preview, 'mask_path') and path == self.preview.mask_path):
+            self.preview.load_image()
+            self.status_bar.showMessage("Graphics reloaded", 2000)
 
     def update_ui_from_data(self):
         for key, widget in self.all_widgets.items():
@@ -540,26 +456,7 @@ class MainWindow(QMainWindow):
                 widget.setValue(val)
                 widget.blockSignals(False)
 
-    def _update_file_watcher(self):
-        if self.watched_files: self.watcher.removePaths(self.watched_files)
-        self.watched_files = []
-        if self.npc_data.filepath and os.path.exists(self.npc_data.filepath): self.watched_files.append(self.npc_data.filepath)
-        if self.preview.image_path and os.path.exists(self.preview.image_path): self.watched_files.append(self.preview.image_path)
-        if hasattr(self.preview, 'mask_path') and self.preview.mask_path and os.path.exists(self.preview.mask_path): self.watched_files.append(self.preview.mask_path)
-        if self.watched_files: self.watcher.addPaths(self.watched_files)
 
-    def on_external_file_change(self, path):
-        if self.is_saving: return
-        if not os.path.exists(path):
-            QTimer.singleShot(100, lambda: self._update_file_watcher())
-            return
-        if path == self.npc_data.filepath:
-            self.is_loading = True
-            if self.npc_data.load(path): self.update_ui_from_data()
-            self.is_loading = False
-        elif path == self.preview.image_path or (hasattr(self.preview, 'mask_path') and path == self.preview.mask_path):
-            self.preview.load_image()
-            self.status_bar.showMessage("Graphics reloaded", 2000)
 
     def on_custom_table_change(self):
         self.npc_data.custom_params = {}
@@ -608,18 +505,5 @@ class MainWindow(QMainWindow):
         for url in event.mimeData().urls():
             file_path = url.toLocalFile()
             if os.path.isfile(file_path) and file_path.lower().endswith(".txt"):
-                self._process_load_path(file_path)
+                self.file_controller.process_load_path(file_path)
                 break
-    
-    def _process_load_path(self, fname):
-        self.is_loading = True
-        if self.npc_data.load(fname):
-            self.scroll_area.verticalScrollBar().setValue(0)
-            self.update_ui_from_data()
-            self.preview.load_image()
-            self.setWindowTitle(f"Editing: {os.path.basename(fname)}")
-            self._update_file_watcher()
-            self.undo_stack.clear()
-            if "Animation" in self.ui_sections: self.ui_sections["Animation"].expand()
-            self.status_bar.showMessage(f"Loaded: {os.path.basename(fname)}", 5000)
-        self.is_loading = False

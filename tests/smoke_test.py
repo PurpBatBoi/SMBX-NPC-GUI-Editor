@@ -1,4 +1,3 @@
-
 # tests/smoke_test.py
 import sys
 import os
@@ -10,14 +9,30 @@ from PyQt6.QtWidgets import QApplication
 app = QApplication([])
 
 try:
+    print("Testing Phase 1 modules...")
     from program.ui.widgets import TriStateBoolWidget, CollapsibleBox
     w = TriStateBoolWidget()
-    b = CollapsibleBox("Test")
-    print("Widgets instantiated successfully")
+    print("- Widgets instantiated")
     
-    # Try importing MainWindow to check for broken imports
+    print("Testing Phase 2 modules...")
+    from program.ui.styles import AppColors, AppStyles
+    print("- Styles imported")
+    
+    from program.utils.image_utils import load_legacy_sprite
+    print("- Image utils imported")
+    
+    from program.ui.form_builder import FormBuilder
+    fb = FormBuilder()
+    print("- FormBuilder instantiated")
+    
+    from program.controllers.file_controller import FileController
+    # FileController needs arguments, just checking import for now
+    print("- FileController imported")
+    
+    print("Testing MainWindow integration...")
     from program.editor_window import MainWindow
-    print("MainWindow imported successfully")
+    mw = MainWindow()
+    print("- MainWindow instantiated")
     
 except Exception as e:
     print(f"FAILED: {e}")

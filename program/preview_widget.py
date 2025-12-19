@@ -2,6 +2,8 @@ import os
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QCursor, QImage
+from .ui.styles import AppColors
+from .utils.image_utils import load_legacy_sprite
 
 class AnimationPreview(QWidget):
     zoomChanged = pyqtSignal(int)
@@ -33,8 +35,8 @@ class AnimationPreview(QWidget):
         self.is_dragging = False
 
         # --- THEME COLORS ---
-        self.bg_color = QColor(30, 30, 30)   # Clean Dark Grey
-        self.grid_color = QColor(50, 50, 50) # Subtle Grid
+        self.bg_color = AppColors.BACKGROUND
+        self.grid_color = AppColors.GRID
         
         self.setMouseTracking(True)
         self.setMinimumSize(400, 400)
@@ -70,75 +72,13 @@ class AnimationPreview(QWidget):
                     mask_path = base + "m" + ext
                     if os.path.exists(mask_path):
                         self.mask_path = mask_path
-                        self.pixmap = self._load_legacy_sprite(img_path, mask_path)
+                        self.pixmap = load_legacy_sprite(img_path, mask_path)
                     else:
                         # Fallback: No mask found, just load as is
                         self.pixmap = QPixmap(img_path)
                     break
                     
         self.update()
-
-    def _load_legacy_sprite(self, img_path, mask_path):
-        """
-        Combines a source image and mask using the Moondust/PGE logic.
-        Simulates legacy BitBlt SRCAND / SRCPAINT rendering.
-        """
-        # Load images and ensure they are in a manipulatable 32-bit format
-        # Note: We use Format_ARGB32 so we can directly access alpha
-        front = QImage(img_path).convertToFormat(QImage.Format.Format_ARGB32)
-        mask = QImage(mask_path).convertToFormat(QImage.Format.Format_ARGB32)
-        
-        img_w, img_h = front.width(), front.height()
-        mask_w, mask_h = mask.width(), mask.height()
-
-        # SMBX typically assumes a white background during the blit simulation 
-        # for texture generation to ensure colors are preserved correctly.
-        bg_r, bg_g, bg_b = 255, 255, 255
-
-        # Process per pixel (following Moondust bitmask_to_rgba logic)
-        for y in range(img_h):
-            for x in range(img_w):
-                # 1. Get Source Pixel
-                f_pixel = front.pixelColor(x, y)
-                f_r, f_g, f_b = f_pixel.red(), f_pixel.green(), f_pixel.blue()
-
-                # 2. Get Mask Pixel (or assume white if out of mask bounds)
-                if x < mask_w and y < mask_h:
-                    m_pixel = mask.pixelColor(x, y)
-                    m_r, m_g, m_b = m_pixel.red(), m_pixel.green(), m_pixel.blue()
-                else:
-                    m_r, m_g, m_b = 255, 255, 255
-
-                # 3. Calculate RGB (Simulate (Mask & BG) | Front)
-                # This ensures the sprite "cuts" into the background correctly
-                res_r = (m_r & bg_r) | f_r
-                res_g = (m_g & bg_g) | f_g
-                res_b = (m_b & bg_b) | f_b
-
-                # 4. Calculate Alpha
-                # Initial: 255 - average(mask)
-                m_avg = (m_r + m_g + m_b) // 3
-                new_alpha = 255 - m_avg
-
-                # Moondust Threshold: Almost white mask becomes fully transparent
-                if m_r > 240 and m_g > 240 and m_b > 240:
-                    new_alpha = 0
-
-                # 5. Enhance Alpha based on Source brightness 
-                # (Standard legacy rendering "glow" or lightness compensation)
-                f_avg = (f_r + f_g + f_b) // 3
-                new_alpha += f_avg
-
-                # Clamp alpha
-                if new_alpha > 255:
-                    new_alpha = 255
-                elif new_alpha < 0:
-                    new_alpha = 0
-
-                # 6. Apply back to front image
-                front.setPixelColor(x, y, QColor(res_r, res_g, res_b, new_alpha))
-
-        return QPixmap.fromImage(front)
 
     def update_timer(self):
         """Starts/Stops the timer based on frame count and pause state"""
@@ -164,19 +104,17 @@ class AnimationPreview(QWidget):
     
     def manual_step_frame(self):
         """Manually advance to the next frame (for step-through button)"""
-        total_frames = int(self.data.standard_params.get('frames') or 1)
-        if total_frames <= 1:
-            self.current_frame = 0
-        else:
-            self.current_frame = (self.current_frame + 1) % total_frames
-        self.update()
+        self.advance_frame(auto=False)
 
     def next_frame(self):
         """Automatically advance frame (called by timer)"""
+        self.advance_frame(auto=True)
+        
+    def advance_frame(self, auto=False):
         total_frames = int(self.data.standard_params.get('frames') or 1)
         if total_frames <= 1:
             self.current_frame = 0
-            self.timer.stop()
+            if auto: self.timer.stop()
         else:
             self.current_frame = (self.current_frame + 1) % total_frames
         self.update()
@@ -353,7 +291,7 @@ class AnimationPreview(QWidget):
             painter.drawLine(int(view_l), y, int(view_r), y)
 
         # Origin Crosshair (Subtle Grey)
-        painter.setPen(QPen(QColor(100, 100, 100), 0))
+        painter.setPen(QPen(AppColors.GRID_CENTER, 0))
         painter.drawLine(-8, 0, 8, 0)
         painter.drawLine(0, -8, 0, 8)
 
@@ -370,8 +308,8 @@ class AnimationPreview(QWidget):
         # Hitbox (Green)
         hitbox_rect = QRectF(-pw / 2, -ph / 2, pw, ph)
         if self.is_hitbox_mode:
-            painter.fillRect(hitbox_rect, QColor(0, 255, 0, 30))
-        pen = QPen(QColor(0, 255, 0), 1) if self.is_hitbox_mode else QPen(QColor(0, 255, 0, 80), 1)
+            painter.fillRect(hitbox_rect, AppColors.HITBOX_FILL)
+        pen = QPen(AppColors.HITBOX_BORDER, 1) if self.is_hitbox_mode else QPen(AppColors.HITBOX_BORDER_DIM, 1)
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.drawRect(hitbox_rect)
@@ -382,10 +320,15 @@ class AnimationPreview(QWidget):
             is_facing_right = (self.show_direction == 1)
             row_offset = 0
             if style == 0:
+                # Style 0: Base is Left. Flip for Right.
                 if is_facing_right: painter.scale(-1, 1)
             elif style >= 1:
+                # Style >= 1: Top = Left, Bottom = Right (Standard SMBX)
                 if is_facing_right:
                     row_offset = frames
+                
+                # Invert offset for Right facing
+                if is_facing_right:
                     ox = -ox
 
             src_y = (row_offset + self.current_frame) * fh
@@ -398,7 +341,7 @@ class AnimationPreview(QWidget):
             painter.drawPixmap(dest_rect.toRect(), self.pixmap, src_rect)
             
             # GFX Box (Red)
-            pen = QPen(QColor(255, 50, 50), 1) if not self.is_hitbox_mode else QPen(QColor(255, 50, 50, 80), 1, Qt.PenStyle.DashLine)
+            pen = QPen(AppColors.GFX_BORDER, 1) if not self.is_hitbox_mode else QPen(AppColors.GFX_BORDER_DIM, 1, Qt.PenStyle.DashLine)
             pen.setCosmetic(True)
             painter.setPen(pen)
             painter.drawRect(dest_rect)
@@ -407,8 +350,18 @@ class AnimationPreview(QWidget):
 
         painter.restore()
         
+        if self.pixmap:
+            painter.save()
+            painter.setOpacity(0.5)
+            mw, mh = 300, 300
+            scaled = self.pixmap.scaled(mw, mh, Qt.AspectRatioMode.KeepAspectRatio)
+            x = self.width() - scaled.width() - 10
+            y = 10
+            painter.drawPixmap(x, y, scaled)
+            painter.restore()
+
         # Info HUD
-        painter.setPen(QColor(200, 200, 200))
+        painter.setPen(AppColors.TEXT_PRIMARY)
         mode_text = "[HITBOX MODE]" if self.is_hitbox_mode else "[GRAPHIC MODE]"
         info = f"{mode_text} | Frame: {self.current_frame + 1}/{frames} | Zoom: {self.zoom}x"
         painter.drawText(10, self.height() - 10, info)
