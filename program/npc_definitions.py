@@ -17,18 +17,18 @@ NPC_DEFS = {
     "frames":     {"type": int, "default": 1, "category": "Animation", "min": 1, "tips": "Frames per direction"},
     "framespeed": {"type": int, "default": 8, "category": "Animation", "min": 1, "tips": "Ticks per frame (Lower = Faster)"},
     "framestyle": {"type": "enum", "default": 0, "category": "Animation", "choices": FRAME_STYLES},
-    "gfxwidth":   {"type": int, "default": 32, "category": "Animation", "min": 0, "tips": "Width of sprite frame"},
-    "gfxheight":  {"type": int, "default": 32, "category": "Animation", "min": 0, "tips": "Height of sprite frame"},
-    "gfxoffsetx": {"type": int, "default": 0,  "category": "Animation", "tips": "Visual X offset"},
-    "gfxoffsety": {"type": int, "default": 0,  "category": "Animation", "tips": "Visual Y offset"},
+    "gfxwidth":   {"type": int, "default": 32, "category": "Animation", "min": 0, "label": "GFX Width", "tips": "Width of sprite frame"},
+    "gfxheight":  {"type": int, "default": 32, "category": "Animation", "min": 0, "label": "GFX Height", "tips": "Height of sprite frame"},
+    "gfxoffsetx": {"type": int, "default": 0,  "category": "Animation", "label": "GFX Offset X", "tips": "Visual X offset"},
+    "gfxoffsety": {"type": int, "default": 0,  "category": "Animation", "label": "GFX Offset Y", "tips": "Visual Y offset"},
     "foreground": {"type": bool, "default": False, "category": "Animation", "tips": "Render priority high"},
     "invisible":  {"type": bool, "default": False, "category": "Animation", "tips": "Invisible but active"},
 
     # ==========================================
     # 2. COLLISION
     # ==========================================
-    "width":            {"type": int, "default": 32, "category": "Collision", "label": "Hitbox W", "tips": "Physical width"},
-    "height":           {"type": int, "default": 32, "category": "Collision", "label": "Hitbox H", "tips": "Physical height"},
+    "width":            {"type": int, "default": 32, "category": "Collision", "label": "Hitbox Width", "tips": "Physical width"},
+    "height":           {"type": int, "default": 32, "category": "Collision", "label": "Hitbox Height", "tips": "Physical height"},
     "noblockcollision": {"type": bool, "default": False, "category": "Collision", "tips": "Passes through blocks/NPCs"},
     "npcblock":         {"type": bool, "default": False, "category": "Collision", "tips": "Blocks other NPCs"},
     "npcblocktop":      {"type": bool, "default": False, "category": "Collision", "tips": "Solid top for other NPCs"},

@@ -60,7 +60,30 @@ class MainWindow(QMainWindow):
         main_layout = QHBoxLayout(main_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Left Panel
+        # Left Panel - Container for description + scroll area
+        left_panel = QWidget()
+        left_panel_layout = QVBoxLayout(left_panel)
+        left_panel_layout.setContentsMargins(0, 0, 0, 0)
+        left_panel_layout.setSpacing(0)
+        
+        # Description area at top (fixed, doesn't scroll)
+        self.description_box = QFrame()
+        self.description_box.setFrameStyle(QFrame.Shape.StyledPanel)
+        self.description_box.setMinimumHeight(60)
+        self.description_box.setMaximumHeight(100)
+        desc_layout = QVBoxLayout(self.description_box)
+        desc_layout.setContentsMargins(8, 8, 8, 8)
+        
+        self.description_title = QLabel("<b>Description:</b>")
+        self.description_label = QLabel("Select a parameter to view its description")
+        self.description_label.setWordWrap(True)
+        self.description_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        desc_layout.addWidget(self.description_title)
+        desc_layout.addWidget(self.description_label)
+        
+        left_panel_layout.addWidget(self.description_box)
+        
+        # Scrollable properties area
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setMinimumWidth(450)
@@ -108,10 +131,12 @@ class MainWindow(QMainWindow):
         self.custom_box.content_layout.addRow(self.custom_table)
         self.form_layout.addWidget(self.custom_box)
         self.form_layout.addStretch(1)
+        
         self.scroll_area.setWidget(scroll_content)
+        left_panel_layout.addWidget(self.scroll_area)
         
         splitter = NoResizeSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.scroll_area)
+        splitter.addWidget(left_panel)
         main_layout.addWidget(splitter, 1)
 
         # Right Panel
@@ -174,6 +199,43 @@ class MainWindow(QMainWindow):
 
         # Initial positioning
         self.reposition_overlay_buttons()
+
+    def update_description(self, param_key):
+        """Update the description label with info about the selected parameter"""
+        if param_key not in NPC_DEFS:
+            return
+        
+        definition = NPC_DEFS[param_key]
+        
+        # Get parameter label
+        label = definition.get('label', param_key)
+        
+        # Get description/tips
+        tips = definition.get('tips', '')
+        
+        # Get type info
+        param_type = definition.get('type')
+        if param_type == bool:
+            type_str = "Boolean"
+        elif param_type == int:
+            type_str = "Integer"
+            min_val = definition.get('min')
+            max_val = definition.get('max')
+            if min_val is not None or max_val is not None:
+                type_str += f" ({min_val} to {max_val})" if min_val is not None and max_val is not None else ""
+        elif param_type == float:
+            type_str = "Float"
+        elif param_type == "enum":
+            type_str = "Choice"
+        else:
+            type_str = "Text"
+        
+        # Build description text
+        desc_text = f"<b>{label}</b> ({type_str})"
+        if tips:
+            desc_text += f"<br/>{tips}"
+        
+        self.description_label.setText(desc_text)
 
     def reposition_overlay_buttons(self):
         """Anchor overlay buttons to preview corners and align animation buttons properly"""

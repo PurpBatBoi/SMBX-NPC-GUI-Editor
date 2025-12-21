@@ -1,9 +1,10 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QCheckBox, QSpinBox, QDoubleSpinBox, QLineEdit, 
                              QComboBox, QSizePolicy)
+from PyQt6.QtCore import Qt
 from typing import Dict, Any, Optional, List
 from .widgets import (TriStateBoolWidget, ValidatedSpinBox, 
-                              ValidatedDoubleSpinBox, CollapsibleBox)
+                              ValidatedDoubleSpinBox, CollapsibleBox, ClickableLabel)
 
 class FormBuilder:
     """
@@ -25,16 +26,7 @@ class FormBuilder:
         priority = ["Animation", "Collision", "Interaction", "Behaviour"]
         categories.sort(key=lambda x: priority.index(x) if x in priority else 99)
         
-        # 2. Define Pair Mappings (e.g. Width/Height)
-        pairs_config = [
-            ('gfxwidth', 'gfxheight', 'GFX Size', 'W:', 'H:'), 
-            ('width', 'height', 'Hitbox Size', 'W:', 'H:'), 
-            ('gfxoffsetx', 'gfxoffsety', 'GFX Offset', 'X:', 'Y:')
-        ]
-        pair_map = {p[0]: ('primary', p) for p in pairs_config}
-        pair_map.update({p[1]: ('secondary', p) for p in pairs_config})
-        
-        # 3. Create Sections
+        # 2. Create Sections
         for cat in categories:
             section = CollapsibleBox(cat)
             layout.addWidget(section)
@@ -42,22 +34,12 @@ class FormBuilder:
             category_keys[cat] = []
             if cat == "Animation": section.expand()
             
-        # 4. Populate Sections
+        # 3. Populate Sections - all parameters are added individually now
         for key, definition in npc_defs.items():
             cat = definition['category']
             section = ui_sections[cat]
             category_keys[cat].append(key)
-            
-            if key in pair_map:
-                role, data = pair_map[key]
-                if role == 'primary':
-                    k1, k2, main_label, sub1, sub2 = data
-                    self._add_dual_int_widget(section, main_label, 
-                                            k1, npc_defs.get(k1), 
-                                            k2, npc_defs.get(k2), 
-                                            sub1, sub2)
-            else:
-                self._add_param_widget(section, key, definition)
+            self._add_param_widget(section, key, definition)
                 
         return ui_sections, category_keys, self.all_widgets, self.param_checkboxes
 
@@ -96,40 +78,13 @@ class FormBuilder:
             container_layout.addWidget(chk)
             container_layout.addWidget(widget, 1)
             
-            section.add_row(definition.get('label', key), container)
+            # Create clickable label
+            label_text = definition.get('label', key)
+            label = ClickableLabel(label_text, key)
+            if self.parent:
+                label.clicked.connect(lambda k=key: self.parent.update_description(k))
+            
+            section.add_row(label, container)
             
             self.all_widgets[key] = widget
             self.param_checkboxes[key] = chk
-
-    def _add_dual_int_widget(self, section, label_row, key1, def1, key2, def2, sublabel1, sublabel2):
-        container = QWidget()
-        lay = QHBoxLayout(container)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(5)
-        
-        chk = QCheckBox()
-        chk.setChecked(False)
-        lay.addWidget(chk)
-        
-        if sublabel1: lay.addWidget(QLabel(sublabel1))
-        w1 = ValidatedSpinBox()
-        w1.setRange(def1.get('min', -9999), def1.get('max', 9999))
-        w1.setToolTip(def1.get('tips', key1))
-        w1.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        w1.setProperty("param_key", key1)
-        lay.addWidget(w1)
-        
-        if sublabel2: lay.addWidget(QLabel(sublabel2))
-        w2 = ValidatedSpinBox()
-        w2.setRange(def2.get('min', -9999), def2.get('max', 9999))
-        w2.setToolTip(def2.get('tips', key2))
-        w2.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        w2.setProperty("param_key", key2)
-        lay.addWidget(w2)
-        
-        section.add_row(label_row, container)
-        
-        self.all_widgets[key1] = w1
-        self.all_widgets[key2] = w2
-        self.param_checkboxes[key1] = chk
-        self.param_checkboxes[key2] = chk

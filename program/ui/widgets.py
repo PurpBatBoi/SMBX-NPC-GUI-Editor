@@ -6,6 +6,21 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from typing import Optional, Any
 from ..validated_widgets import ValidatedSpinBox, ValidatedDoubleSpinBox
 
+# --- ClickableLabel ---
+class ClickableLabel(QLabel):
+    """Label that emits a signal when clicked"""
+    clicked = pyqtSignal(str)  # Emits the param_key
+    
+    def __init__(self, text: str, param_key: str, parent: Optional[QWidget] = None):
+        super().__init__(text, parent)
+        self.param_key = param_key
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.param_key)
+        super().mousePressEvent(event)
+
 # --- TriStateBoolWidget ---
 class TriStateBoolWidget(QWidget):
     stateChanged = pyqtSignal()
@@ -111,7 +126,8 @@ class CollapsibleBox(QWidget):
     def collapse(self):
         if self.arrow_btn.isChecked(): self.toggle_view()
 
-    def add_row(self, label: str, widget: QWidget):
+    def add_row(self, label, widget: QWidget):
+        """Add a row with either a string label or a widget label"""
         self.content_layout.addRow(label, widget)
 
 
