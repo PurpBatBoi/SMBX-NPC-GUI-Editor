@@ -14,7 +14,7 @@ from .undo_commands import (ChangeParameterCommand, ChangeMultipleParametersComm
                             ToggleParameterCommand, AddCustomParameterCommand,
                             RemoveCustomParameterCommand, ChangeCustomParameterCommand)
 from .validated_widgets import ValidatedSpinBox, ValidatedDoubleSpinBox
-from .ui.widgets import TriStateBoolWidget, CollapsibleBox, NoResizeSplitter, get_widget_value
+from .ui.widgets import TriStateBoolWidget, CollapsibleBox, NoResizeSplitter, get_widget_value, ColorPickerWidget
 from .ui.form_builder import FormBuilder
 from .ui.styles import AppStyles
 from .controllers.file_controller import FileController
@@ -105,6 +105,8 @@ class MainWindow(QMainWindow):
                 widget.textChanged.connect(lambda *_, k=key: self.on_standard_change(k))
             elif hasattr(widget, 'currentIndexChanged'): # ComboBox
                 widget.currentIndexChanged.connect(lambda *_, k=key: self.on_standard_change(k))
+            elif hasattr(widget, 'colorChanged'): # ColorPicker
+                widget.colorChanged.connect(lambda *_, k=key: self.on_standard_change(k))
                 
         # Connect signals for checkboxes
         for key, chk in self.param_checkboxes.items():
@@ -386,6 +388,7 @@ class MainWindow(QMainWindow):
             elif isinstance(widget, QComboBox):
                 idx = widget.findData(display_val)
                 if idx >= 0: widget.setCurrentIndex(idx)
+            elif isinstance(widget, ColorPickerWidget): widget.setValue(display_val)
             widget.blockSignals(False)
 
         for cat, keys in self.category_keys.items():
@@ -453,10 +456,24 @@ class MainWindow(QMainWindow):
             w = self.all_widgets.get(key)
             if w: w.setEnabled(checked)
             return
+
+        # Special logic: "lightradius" defaults to 10 if 0 when enabled
+        if key == 'lightradius' and checked:
+            current_val = self.npc_data.standard_params.get('lightradius') or 0
+            if current_val <= 0:
+                # Update widget immediately to show user 10
+                widget = self.all_widgets.get(key)
+                if widget:
+                    widget.blockSignals(True)
+                    widget.setValue(10)
+                    widget.blockSignals(False)
+        
         widget = self.all_widgets.get(key)
         if not widget: return
+        
         old_enabled = self.npc_data.standard_params.get(key) is not None
         value = get_widget_value(widget) if checked else None
+        
         self.undo_stack.push(ToggleParameterCommand(self.npc_data, key, old_enabled, checked, value, ui_callback=self.update_single_checkbox))
         self.preview.update_timer()
         self.preview.update()
@@ -472,6 +489,7 @@ class MainWindow(QMainWindow):
         elif isinstance(widget, QComboBox):
             idx = widget.findData(display)
             if idx >= 0: widget.setCurrentIndex(idx)
+        elif isinstance(widget, ColorPickerWidget): widget.setValue(display)
         widget.blockSignals(False)
         self.preview.update_timer()
         self.preview.update()
@@ -485,12 +503,12 @@ class MainWindow(QMainWindow):
         if widget: widget.setEnabled(enabled)
 
     def on_visual_drag_start(self):
-        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
+        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height', 'lightradius']
         self._drag_snapshot = {k: self.npc_data.standard_params.get(k) for k in keys}
     
     def on_visual_drag_complete(self):
         if self.is_loading: return
-        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
+        keys = ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height', 'lightradius']
         changes = {}
         for key in keys:
             old_val, new_val = self._drag_snapshot.get(key), self.npc_data.standard_params.get(key)
@@ -507,7 +525,7 @@ class MainWindow(QMainWindow):
         self._drag_snapshot = {}
 
     def sync_ui_from_visual(self):
-        p, keys = self.npc_data.standard_params, ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height']
+        p, keys = self.npc_data.standard_params, ['gfxwidth', 'gfxheight', 'gfxoffsetx', 'gfxoffsety', 'width', 'height', 'lightradius']
         for key in keys:
             widget = self.all_widgets.get(key)
             val = p.get(key)

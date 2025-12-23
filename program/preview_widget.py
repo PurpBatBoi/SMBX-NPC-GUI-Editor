@@ -154,9 +154,25 @@ class AnimationPreview(QWidget):
     def get_view_limits(self):
         rect = self.get_active_rect()
         margin = 100
-        if not rect: return -margin, margin, -margin, margin
-        return (rect.left() - margin, rect.right() + margin, 
-                rect.top() - margin, rect.bottom() + margin)
+        
+        # Expand limits to include lighting if active
+        p = self.data.standard_params
+        lr = int(p.get('lightradius') or 0)
+        
+        if not rect:
+            l, r, t, b = 0, 0, 0, 0
+        else:
+            l, r, t, b = rect.left(), rect.right(), rect.top(), rect.bottom()
+            
+        if lr > 0:
+            # Circle at cx,cy with radius lr
+            cx, cy = self.get_light_center()
+            l = min(l, cx - lr)
+            r = max(r, cx + lr)
+            t = min(t, cy - lr)
+            b = max(b, cy + lr)
+            
+        return (l - margin, r + margin, t - margin, b + margin)
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
@@ -234,6 +250,15 @@ class AnimationPreview(QWidget):
                     else:
                         p['gfxoffsetx'] = (p.get('gfxoffsetx') or 0) + dx
                     p['gfxoffsety'] = (p.get('gfxoffsety') or 0) + dy
+            elif self.hover_state == 'LIGHT':
+                # Calculate new radius based on distance from center
+                lx, ly = self.get_logical_pos(event.pos())
+                cx, cy = self.get_light_center()
+                import math
+                dx = lx - cx
+                dy = ly - cy
+                new_radius = int(math.sqrt(dx*dx + dy*dy))
+                p['lightradius'] = max(0, new_radius)
             elif self.is_hitbox_mode:
                 w = p.get('width') or 32
                 h = p.get('height') or 32
@@ -266,16 +291,55 @@ class AnimationPreview(QWidget):
         elif state in ['T', 'B']: self.setCursor(Qt.CursorShape.SizeVerCursor)
         elif state == 'MOVE':
             self.setCursor(Qt.CursorShape.ArrowCursor if self.is_hitbox_mode else Qt.CursorShape.SizeAllCursor)
+        elif state == 'LIGHT':
+            self.setCursor(Qt.CursorShape.SizeAllCursor) # Or a diagonal cursor?
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
+    def get_light_center(self):
+        p = self.data.standard_params
+        
+        # Offsets
+        lox = int(p.get('lightoffsetx') or 0)
+        loy = int(p.get('lightoffsety') or 0)
+        
+        # Start at Hitbox Center (0, 0)
+        cx = -lox
+        cy = loy
+        
+        # Handle Direction (Mirroring)
+        # If facing right (1), everything mirrors around X=0
+        if self.show_direction == 1:
+            cx = -cx
+            
+        return cx, cy
+
     def check_hover_edge(self, lx, ly):
+        p = self.data.standard_params
+        
+        # Check Lighting Circle First (Outer layer)
+        light_radius = int(p.get('lightradius') or 0)
+        if light_radius > 0:
+            cx, cy = self.get_light_center()
+            import math
+            # Distance from Light Center
+            dx = lx - cx
+            dy = ly - cy
+            dist = math.sqrt(dx*dx + dy*dy)
+            tol = 8 / self.zoom
+            if tol < 2: tol = 2
+            
+            # Allow grabbing if close to radius
+            if abs(dist - light_radius) < tol:
+                return 'LIGHT'
+
         rect = self.get_active_rect()
         if not rect: return None
         tol = 8 / self.zoom
         if tol < 2: tol = 2
         l, r = rect.left(), rect.right()
         t, b = rect.top(), rect.bottom()
+        
         if t - tol <= ly <= b + tol:
             if abs(lx - l) < tol: return 'L'
             if abs(lx - r) < tol: return 'R'
@@ -347,6 +411,42 @@ class AnimationPreview(QWidget):
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.drawRect(hitbox_rect)
+
+        # Lighting Circle
+        light_radius = int(p.get('lightradius') or 0)
+        if light_radius > 0:
+            cx, cy = self.get_light_center()
+            
+            # Determine color
+            c_str = p.get('lightcolor')
+            fill_color = AppColors.LIGHT_FILL
+            border_color = AppColors.LIGHT_BORDER
+            
+            if c_str:
+                c_str = str(c_str).strip()
+                # Parse customized color
+                try:
+                    if c_str.startswith("0x") and len(c_str) == 8:
+                        r = int(c_str[2:4], 16)
+                        g = int(c_str[4:6], 16)
+                        b = int(c_str[6:8], 16)
+                        # Create colors (Fill is semi-transparent)
+                        fill_color = QColor(r, g, b, 100) 
+                        border_color = QColor(r, g, b, 255)
+                    elif c_str.startswith("#") or QColor.isValidColor(c_str):
+                        c = QColor(c_str)
+                        if c.isValid():
+                            fill_color = QColor(c.red(), c.green(), c.blue(), 100)
+                            border_color = c
+                except:
+                    # Fallback on error
+                    pass
+
+            painter.setBrush(fill_color)
+            painter.setPen(QPen(border_color, 2 if self.hover_state == 'LIGHT' else 1))
+            # Draw ellipse centered at cx, cy
+            painter.drawEllipse(QRectF(cx - light_radius, cy - light_radius, light_radius*2, light_radius*2))
+            painter.setBrush(Qt.BrushStyle.NoBrush) # Reset brush
 
         # Sprite
         if self.pixmap:

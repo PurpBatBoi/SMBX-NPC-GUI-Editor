@@ -1,8 +1,9 @@
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QRadioButton, QButtonGroup, 
                              QFrame, QToolButton, QLabel, QFormLayout, QVBoxLayout,
                              QSplitter, QSplitterHandle, QSpinBox, QDoubleSpinBox,
-                             QLineEdit, QComboBox)
+                             QLineEdit, QComboBox, QPushButton, QColorDialog)
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor
 from typing import Optional, Any
 from ..validated_widgets import ValidatedSpinBox, ValidatedDoubleSpinBox
 
@@ -144,6 +145,91 @@ class NoResizeSplitter(QSplitter):
     def createHandle(self):
         return _FixedHandle(self.orientation(), self)
 
+# --- ColorPickerWidget ---
+class ColorPickerWidget(QWidget):
+    colorChanged = pyqtSignal(str) # Emits hex string 0xAARRGGBB
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        
+        self.line_edit = QLineEdit("0xFFFFFF")
+        self.line_edit.textChanged.connect(self._on_text_changed)
+        
+        self.btn_pick = QPushButton()
+        self.btn_pick.setFixedSize(24, 24)
+        self.btn_pick.setStyleSheet("background-color: white; border: 1px solid #555;")
+        self.btn_pick.clicked.connect(self.pick_color)
+        
+        layout.addWidget(self.btn_pick)
+        layout.addWidget(self.line_edit)
+        
+        self.current_color_str = "0xFFFFFF"
+        self._on_text_changed(self.current_color_str)
+
+    def _on_text_changed(self, text):
+        self.current_color_str = text
+        self.update_button_color(text)
+        self.colorChanged.emit(text)
+
+    def pick_color(self):
+        # Try to parse current color
+        c = QColor(Qt.GlobalColor.white)
+        text = self.line_edit.text().strip()
+        
+        # Parse 0xRRGGBB
+        if text.startswith("0x") and len(text) == 8:
+            r = int(text[2:4], 16)
+            g = int(text[4:6], 16)
+            b = int(text[6:8], 16)
+            c = QColor(r, g, b)
+        elif text.startswith("#"):
+            c = QColor(text)
+        elif QColor.isValidColor(text):
+            c = QColor(text)
+            
+        dialog = QColorDialog(c, self)
+        # Disable Alpha Channel
+        dialog.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, False)
+        if dialog.exec():
+            new_color = dialog.currentColor()
+            # Format as 0xRRGGBB
+            hex_str = f"0x{new_color.red():02X}{new_color.green():02X}{new_color.blue():02X}"
+            self.line_edit.setText(hex_str)
+
+    def update_button_color(self, text):
+        c = QColor(Qt.GlobalColor.white)
+        valid = False
+        text = text.strip()
+        
+        try:
+            if text.startswith("0x") and len(text) == 8:
+                r = int(text[2:4], 16)
+                g = int(text[4:6], 16)
+                b = int(text[6:8], 16)
+                c = QColor(r, g, b)
+                valid = True
+            elif QColor.isValidColor(text):
+                c = QColor(text)
+                valid = True
+        except:
+            pass
+            
+        if valid:
+            style = f"background-color: rgb({c.red()}, {c.green()}, {c.blue()}); border: 1px solid #888;"
+            self.btn_pick.setStyleSheet(style)
+        else:
+            self.btn_pick.setStyleSheet("background-color: transparent; border: 1px solid red;")
+
+    def setValue(self, value):
+        if value != self.line_edit.text():
+            self.line_edit.setText(str(value))
+    
+    def value(self):
+        return self.line_edit.text()
+
 def get_widget_value(widget: QWidget) -> Any:
     """Helper to get value from various widget types"""
     if isinstance(widget, TriStateBoolWidget): return widget.get_state()
@@ -151,4 +237,5 @@ def get_widget_value(widget: QWidget) -> Any:
         return widget.value()
     elif isinstance(widget, QLineEdit): return widget.text() if widget.text() else None
     elif isinstance(widget, QComboBox): return widget.currentData()
+    elif isinstance(widget, ColorPickerWidget): return widget.value()
     return None

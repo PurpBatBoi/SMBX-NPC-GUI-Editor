@@ -15,6 +15,10 @@ class AppColors:
     GFX_BORDER = QColor(255, 50, 50)
     GFX_BORDER_DIM = QColor(255, 50, 50, 80)
 
+    # Lighting
+    LIGHT_FILL = QColor(50, 150, 255, 40)
+    LIGHT_BORDER = QColor(50, 150, 255)
+
 class AppStyles:
     HEADER_FRAME = """
         .QFrame { background-color: #444; border-radius: 3px; }

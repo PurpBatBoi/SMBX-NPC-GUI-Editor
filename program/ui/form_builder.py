@@ -4,7 +4,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt
 from typing import Dict, Any, Optional, List
 from .widgets import (TriStateBoolWidget, ValidatedSpinBox, 
-                              ValidatedDoubleSpinBox, CollapsibleBox, ClickableLabel)
+                              ValidatedDoubleSpinBox, CollapsibleBox, ClickableLabel,
+                              ColorPickerWidget)
 
 class FormBuilder:
     """
@@ -61,6 +62,8 @@ class FormBuilder:
         elif dtype == "enum":
             widget = QComboBox()
             for k, v in definition.get('choices', {}).items(): widget.addItem(v, k)
+        elif dtype == "color":
+            widget = ColorPickerWidget()
         
         if widget:
             widget.setProperty("param_key", key)

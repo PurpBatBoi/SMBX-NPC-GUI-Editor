@@ -126,7 +126,7 @@ NPC_DEFS = {
     "lightradius":     {"type": int,   "default": 0,       "category": "Lighting", "min": 0},
     "lightbrightness": {"type": float, "default": 1.0,     "category": "Lighting", "step": 0.1},
     "lightflicker":    {"type": bool,  "default": False,   "category": "Lighting"},
-    "lightcolor":      {"type": str,   "default": "white", "category": "Lighting"},
+    "lightcolor":      {"type": "color",   "default": "0xFFFFFF", "category": "Lighting"},
 
     # ==========================================
     # 8. EDITOR ONLY
