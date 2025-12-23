@@ -4,6 +4,9 @@
 
 A specialized GUI tool for editing Super Mario Bros. X (SMBX) NPC configuration files (`.txt`). This tool enables real-time visual editing of sprites and hitboxes, strictly adheres to SMBX file standards, and supports "Hot Reloading" for external edits.
 
+# Disclaimer
+Tool developed with the aid of Google Gemini.
+
 ## Features
 
 ### ✨ Undo/Redo System
