@@ -26,7 +26,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("SMBX Visual NPC Editor")
         self.resize(1100, 800)
-        self.showMaximized() # Start maximized
+        self.show()  # Start normal size
         
         # Undo/Redo Stack
         self.undo_stack = QUndoStack(self)
@@ -86,7 +86,7 @@ class MainWindow(QMainWindow):
         # Scrollable properties area
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setMinimumWidth(450)
+        self.scroll_area.setMinimumWidth(270)
         scroll_content = QWidget()
         self.form_layout = QVBoxLayout(scroll_content)
 
